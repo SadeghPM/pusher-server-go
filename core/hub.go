@@ -4,26 +4,29 @@ import (
 	"sync"
 )
 
-type Hub struct {
+// AppHub tracks the state for a single tenant (application).
+type AppHub struct {
 	mu       sync.RWMutex
+	AppID    string
 	Clients  map[string]*Client
 	Channels map[string]map[*Client]bool
 }
 
-func NewHub() *Hub {
-	return &Hub{
+func NewAppHub(appID string) *AppHub {
+	return &AppHub{
+		AppID:    appID,
 		Clients:  make(map[string]*Client),
 		Channels: make(map[string]map[*Client]bool),
 	}
 }
 
-func (h *Hub) RegisterClient(client *Client) {
+func (h *AppHub) RegisterClient(client *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.Clients[client.SocketID] = client
 }
 
-func (h *Hub) UnregisterClient(client *Client) {
+func (h *AppHub) UnregisterClient(client *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -43,7 +46,7 @@ func (h *Hub) UnregisterClient(client *Client) {
 	}
 }
 
-func (h *Hub) Subscribe(client *Client, channel string) {
+func (h *AppHub) Subscribe(client *Client, channel string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -53,7 +56,7 @@ func (h *Hub) Subscribe(client *Client, channel string) {
 	h.Channels[channel][client] = true
 }
 
-func (h *Hub) BroadcastToChannel(channel string, message []byte, excludeSocketID string) {
+func (h *AppHub) BroadcastToChannel(channel string, message []byte, excludeSocketID string) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -68,4 +71,36 @@ func (h *Hub) BroadcastToChannel(channel string, message []byte, excludeSocketID
 			}
 		}
 	}
+}
+
+// GlobalHub manages all AppHubs across the server.
+type GlobalHub struct {
+	mu      sync.RWMutex
+	AppHubs map[string]*AppHub // map AppID to AppHub
+}
+
+func NewGlobalHub() *GlobalHub {
+	return &GlobalHub{
+		AppHubs: make(map[string]*AppHub),
+	}
+}
+
+func (gh *GlobalHub) GetOrCreateAppHub(appID string) *AppHub {
+	gh.mu.Lock()
+	defer gh.mu.Unlock()
+
+	if hub, ok := gh.AppHubs[appID]; ok {
+		return hub
+	}
+
+	newHub := NewAppHub(appID)
+	gh.AppHubs[appID] = newHub
+	return newHub
+}
+
+func (gh *GlobalHub) GetAppHub(appID string) *AppHub {
+	gh.mu.RLock()
+	defer gh.mu.RUnlock()
+
+	return gh.AppHubs[appID]
 }

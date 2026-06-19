@@ -38,48 +38,62 @@ type PusherSubscribeData struct {
 }
 
 type Server struct {
-	Hub    *core.Hub
-	Config *config.Config
+	GlobalHub *core.GlobalHub
+	Config    *config.Config
 }
 
-func NewServer(hub *core.Hub, cfg *config.Config) *Server {
+func NewServer(globalHub *core.GlobalHub, cfg *config.Config) *Server {
 	return &Server{
-		Hub:    hub,
-		Config: cfg,
+		GlobalHub: globalHub,
+		Config:    cfg,
 	}
 }
 
-func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
+// Handler generation per AppKey is not strictly necessary if we parse it from the URL
+// But we registered explicitly in main.go before. We will extract appKey from the path now in main.go
+// so we need a unified handler that takes the appKey.
+func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey string) {
+	// Find the matching AppConfig
+	var appCfg *config.AppConfig
+	for _, app := range s.Config.Apps {
+		if app.AppKey == appKey {
+			appCfg = &app
+			break
+		}
+	}
+
+	if appCfg == nil {
+		http.Error(w, "App not found", http.StatusNotFound)
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
-	// Generate socket ID. Pusher format usually looks like: 12345.67890
-	// We'll use a modified UUID or random string.
-	// We will use standard UUID for now. Wait, Pusher spec requires specific format for socket_id to pass validation in Laravel
-	// Socket id is string, typically float-like: "12345.67890"
+	appHub := s.GlobalHub.GetOrCreateAppHub(appCfg.AppID)
 	socketID := generateSocketID()
 
-	client := core.NewClient(s.Hub, conn, socketID)
-	s.Hub.RegisterClient(client)
+	client := core.NewClient(appHub, conn, socketID)
+	appHub.RegisterClient(client)
 
 	// Send connection established event
 	establishedPayload := fmt.Sprintf(`{"event":"pusher:connection_established","data":"{\"socket_id\":\"%s\",\"activity_timeout\":120}"}`, socketID)
 	client.Send <- []byte(establishedPayload)
 
 	go s.writePump(client)
-	go s.readPump(client)
+	go s.readPump(client, appCfg.AppSecret, appCfg.AppKey)
 }
 
 func generateSocketID() string {
 	return fmt.Sprintf("%d.%d", time.Now().Unix(), time.Now().UnixNano()%100000)
 }
 
-func (s *Server) readPump(client *core.Client) {
+func (s *Server) readPump(client *core.Client, appSecret, appKey string) {
 	defer func() {
-		s.Hub.UnregisterClient(client)
+		client.AppHub.UnregisterClient(client)
 		client.Conn.Close()
 	}()
 
@@ -96,7 +110,7 @@ func (s *Server) readPump(client *core.Client) {
 			break
 		}
 
-		s.handleMessage(client, message)
+		s.handleMessage(client, message, appSecret, appKey)
 	}
 }
 
@@ -141,7 +155,7 @@ func (s *Server) writePump(client *core.Client) {
 	}
 }
 
-func (s *Server) handleMessage(client *core.Client, message []byte) {
+func (s *Server) handleMessage(client *core.Client, message []byte, appSecret, appKey string) {
 	var event PusherEvent
 	if err := json.Unmarshal(message, &event); err != nil {
 		log.Println("Invalid JSON received:", err)
@@ -153,9 +167,6 @@ func (s *Server) handleMessage(client *core.Client, message []byte) {
 		client.Send <- []byte(`{"event":"pusher:pong","data":"{}"}`)
 
 	case "pusher:subscribe":
-		// Pusher typically sends data as a stringified JSON inside the "data" field in client events,
-		// but sometimes as direct object depending on the client library version.
-		// Let's handle both.
 		var subData PusherSubscribeData
 
 		// Try unmarshaling string first
@@ -173,11 +184,11 @@ func (s *Server) handleMessage(client *core.Client, message []byte) {
 				// Verify signature
 				// Format: socket_id:channel_name
 				toSign := fmt.Sprintf("%s:%s", client.SocketID, subData.Channel)
-				expectedSig := generateSignature(s.Config.AppSecret, toSign)
+				expectedSig := generateSignature(appSecret, toSign)
 
 				// Auth string format is app_key:signature
 				authParts := strings.Split(subData.Auth, ":")
-				if len(authParts) != 2 || authParts[0] != s.Config.AppKey || authParts[1] != expectedSig {
+				if len(authParts) != 2 || authParts[0] != appKey || authParts[1] != expectedSig {
 					log.Printf("Invalid signature for channel %s. Expected %s, got %s", subData.Channel, expectedSig, subData.Auth)
 
 					errorPayload := fmt.Sprintf(`{"event":"pusher:error","data":"{\"message\":\"Invalid signature: Expected HMAC SHA256 hex digest of %s:%s, but got %s\",\"code\":null}"}`, client.SocketID, subData.Channel, subData.Auth)
@@ -186,7 +197,7 @@ func (s *Server) handleMessage(client *core.Client, message []byte) {
 				}
 			}
 
-			s.Hub.Subscribe(client, subData.Channel)
+			client.AppHub.Subscribe(client, subData.Channel)
 
 			// Confirm subscription
 			successPayload := fmt.Sprintf(`{"event":"pusher_internal:subscription_succeeded","channel":"%s","data":"{}"}`, subData.Channel)
