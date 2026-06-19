@@ -4,8 +4,8 @@ import (
 	"testing"
 )
 
-func TestHubRegistration(t *testing.T) {
-	hub := NewHub()
+func TestAppHubRegistration(t *testing.T) {
+	hub := NewAppHub("test-app")
 	client := &Client{SocketID: "123.456", Send: make(chan []byte)}
 
 	hub.RegisterClient(client)
@@ -21,8 +21,8 @@ func TestHubRegistration(t *testing.T) {
 	}
 }
 
-func TestHubSubscription(t *testing.T) {
-	hub := NewHub()
+func TestAppHubSubscription(t *testing.T) {
+	hub := NewAppHub("test-app")
 	client := &Client{SocketID: "123.456", Send: make(chan []byte)}
 	hub.RegisterClient(client)
 
@@ -30,5 +30,21 @@ func TestHubSubscription(t *testing.T) {
 
 	if len(hub.Channels["my-channel"]) != 1 {
 		t.Errorf("Expected 1 subscriber in channel, got %d", len(hub.Channels["my-channel"]))
+	}
+}
+
+func TestGlobalHub(t *testing.T) {
+	global := NewGlobalHub()
+
+	hub1 := global.GetOrCreateAppHub("app1")
+	hub2 := global.GetOrCreateAppHub("app2")
+
+	if hub1.AppID != "app1" || hub2.AppID != "app2" {
+		t.Errorf("GlobalHub created apps with wrong IDs")
+	}
+
+	retrievedHub := global.GetAppHub("app1")
+	if retrievedHub != hub1 {
+		t.Errorf("Expected to retrieve the same hub instance")
 	}
 }

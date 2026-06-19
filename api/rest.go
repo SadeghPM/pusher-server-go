@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-
 	"net/http"
 
 	"pusher-clone/config"
@@ -16,14 +15,14 @@ import (
 )
 
 type API struct {
-	Hub    *core.Hub
-	Config *config.Config
+	GlobalHub *core.GlobalHub
+	Config    *config.Config
 }
 
-func NewAPI(hub *core.Hub, cfg *config.Config) *API {
+func NewAPI(globalHub *core.GlobalHub, cfg *config.Config) *API {
 	return &API{
-		Hub:    hub,
-		Config: cfg,
+		GlobalHub: globalHub,
+		Config:    cfg,
 	}
 }
 
@@ -36,9 +35,23 @@ type TriggerPayload struct {
 	SocketID string   `json:"socket_id,omitempty"`
 }
 
-func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request) {
+func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Find App Config
+	var appCfg *config.AppConfig
+	for _, app := range a.Config.Apps {
+		if app.AppID == appID {
+			appCfg = &app
+			break
+		}
+	}
+
+	if appCfg == nil {
+		http.Error(w, "App not found", http.StatusNotFound)
 		return
 	}
 
@@ -57,7 +70,7 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request) {
 	bodyMD5 := r.URL.Query().Get("body_md5")
 	authSignature := r.URL.Query().Get("auth_signature")
 
-	if authKey != a.Config.AppKey {
+	if authKey != appCfg.AppKey {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -78,7 +91,7 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request) {
 
 	stringToSign := fmt.Sprintf("%s\n%s\n%s", r.Method, r.URL.Path, queryParams)
 
-	mac := hmac.New(sha256.New, []byte(a.Config.AppSecret))
+	mac := hmac.New(sha256.New, []byte(appCfg.AppSecret))
 	mac.Write([]byte(stringToSign))
 	expectedSignature := hex.EncodeToString(mac.Sum(nil))
 
@@ -101,6 +114,8 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Broadcast to WebSockets
+	appHub := a.GlobalHub.GetOrCreateAppHub(appID)
+
 	for _, channel := range channels {
 		// Construct the WebSocket event message
 		// Note: The data field in the REST payload is already a stringified JSON.
@@ -111,7 +126,7 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request) {
 		// If payload.Data is already stringified JSON, using string format directly works for Pusher clients
 		message := fmt.Sprintf(`{"event":"%s","channel":"%s","data":%s}`, payload.Name, channel, escapedData)
 
-		a.Hub.BroadcastToChannel(channel, []byte(message), payload.SocketID)
+		appHub.BroadcastToChannel(channel, []byte(message), payload.SocketID)
 	}
 
 	// Respond with success
