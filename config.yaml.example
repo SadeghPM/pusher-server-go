@@ -1,0 +1,8 @@
+port: "8080"
+apps:
+  - app_id: "my-app-id-1"
+    app_key: "my-app-key-1"
+    app_secret: "my-app-secret-1"
+  - app_id: "my-app-id-2"
+    app_key: "my-app-key-2"
+    app_secret: "my-app-secret-2"

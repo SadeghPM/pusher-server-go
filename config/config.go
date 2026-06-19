@@ -4,33 +4,35 @@ import (
 	"log"
 	"os"
 
-	"github.com/joho/godotenv"
+	"gopkg.in/yaml.v3"
 )
 
+type AppConfig struct {
+	AppID     string `yaml:"app_id"`
+	AppKey    string `yaml:"app_key"`
+	AppSecret string `yaml:"app_secret"`
+}
+
 type Config struct {
-	AppID     string
-	AppKey    string
-	AppSecret string
-	Port      string
+	Port string      `yaml:"port"`
+	Apps []AppConfig `yaml:"apps"`
 }
 
-func LoadConfig() *Config {
-	err := godotenv.Load()
+func LoadConfig(filename string) *Config {
+	data, err := os.ReadFile(filename)
 	if err != nil {
-		log.Println("No .env file found, relying on environment variables")
+		log.Fatalf("Failed to read config file %s: %v", filename, err)
 	}
 
-	return &Config{
-		AppID:     getEnv("APP_ID", "1"),
-		AppKey:    getEnv("APP_KEY", "app-key"),
-		AppSecret: getEnv("APP_SECRET", "app-secret"),
-		Port:      getEnv("PORT", "8080"),
+	var cfg Config
+	err = yaml.Unmarshal(data, &cfg)
+	if err != nil {
+		log.Fatalf("Failed to parse config file %s: %v", filename, err)
 	}
-}
 
-func getEnv(key, fallback string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
+	if cfg.Port == "" {
+		cfg.Port = "8080"
 	}
-	return fallback
+
+	return &cfg
 }

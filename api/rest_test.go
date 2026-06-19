@@ -17,12 +17,17 @@ import (
 
 func TestHandleEventsAuth(t *testing.T) {
 	cfg := &config.Config{
-		AppID:     "123",
-		AppKey:    "test-key",
-		AppSecret: "test-secret",
+		Port: "8080",
+		Apps: []config.AppConfig{
+			{
+				AppID:     "123",
+				AppKey:    "test-key",
+				AppSecret: "test-secret",
+			},
+		},
 	}
-	hub := core.NewHub()
-	api := NewAPI(hub, cfg)
+	globalHub := core.NewGlobalHub()
+	api := NewAPI(globalHub, cfg)
 
 	body := []byte(`{"name":"my-event","channel":"my-channel","data":"{\"message\":\"hello\"}"}`)
 
@@ -39,7 +44,7 @@ func TestHandleEventsAuth(t *testing.T) {
 	queryParams := fmt.Sprintf("auth_key=%s&auth_timestamp=%s&auth_version=%s&body_md5=%s", authKey, authTimestamp, authVersion, bodyMD5)
 	stringToSign := fmt.Sprintf("POST\n/apps/123/events\n%s", queryParams)
 
-	mac := hmac.New(sha256.New, []byte(cfg.AppSecret))
+	mac := hmac.New(sha256.New, []byte("test-secret"))
 	mac.Write([]byte(stringToSign))
 	authSignature := hex.EncodeToString(mac.Sum(nil))
 
@@ -49,8 +54,7 @@ func TestHandleEventsAuth(t *testing.T) {
 	req := httptest.NewRequest("POST", url, bytes.NewBuffer(body))
 	rr := httptest.NewRecorder()
 
-	handler := http.HandlerFunc(api.HandleEvents)
-	handler.ServeHTTP(rr, req)
+	api.HandleEvents(rr, req, "123")
 
 	if status := rr.Code; status != http.StatusOK {
 		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)

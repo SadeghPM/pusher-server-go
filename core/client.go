@@ -5,15 +5,15 @@ import (
 )
 
 type Client struct {
-	Hub      *Hub
+	AppHub   *AppHub
 	Conn     *websocket.Conn
 	Send     chan []byte
 	SocketID string
 }
 
-func NewClient(hub *Hub, conn *websocket.Conn, socketID string) *Client {
+func NewClient(appHub *AppHub, conn *websocket.Conn, socketID string) *Client {
 	return &Client{
-		Hub:      hub,
+		AppHub:   appHub,
 		Conn:     conn,
 		Send:     make(chan []byte, 256),
 		SocketID: socketID,
