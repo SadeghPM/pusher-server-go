@@ -27,8 +27,8 @@ case "${ARCH}" in
 esac
 
 echo -e "${YELLOW}Fetching latest release info...${NC}"
-REPO="jules/pusher-clone"
-LATEST_RELEASE_URL="" # Set to blank to fall back to local binary for testing
+REPO="SadeghPM/pusher-server-go"
+LATEST_RELEASE_URL=$(curl -s https://api.github.com/repos/${REPO}/releases/latest | grep "browser_download_url.*_Linux_${ARCH}.tar.gz" | cut -d '"' -f 4 | head -n 1)
 
 INSTALL_DIR="/opt/pusher-clone"
 USER="pusher-clone"
