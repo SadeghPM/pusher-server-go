@@ -33,6 +33,19 @@ func TestAppHubSubscription(t *testing.T) {
 	}
 }
 
+func TestAppHubUnsubscribeNonExistentChannel(t *testing.T) {
+	hub := NewAppHub("test-app")
+	client := &Client{SocketID: "123.456", Send: make(chan []byte)}
+	hub.RegisterClient(client)
+
+	// Attempt to unsubscribe from a channel that doesn't exist
+	hub.Unsubscribe(client, "non-existent-channel")
+
+	if len(hub.Channels) != 0 {
+		t.Errorf("Expected 0 channels, got %d", len(hub.Channels))
+	}
+}
+
 func TestGlobalHub(t *testing.T) {
 	global := NewGlobalHub()
 
@@ -46,5 +59,66 @@ func TestGlobalHub(t *testing.T) {
 	retrievedHub := global.GetAppHub("app1")
 	if retrievedHub != hub1 {
 		t.Errorf("Expected to retrieve the same hub instance")
+	}
+}
+
+func TestAppHubGetPresenceMembers(t *testing.T) {
+	hub := NewAppHub("test-app")
+
+	// Create some clients
+	client1 := &Client{SocketID: "123.456", Send: make(chan []byte)}
+	client2 := &Client{SocketID: "123.457", Send: make(chan []byte)}
+	client3 := &Client{SocketID: "123.458", Send: make(chan []byte)}
+
+	hub.RegisterClient(client1)
+	hub.RegisterClient(client2)
+	hub.RegisterClient(client3)
+
+	channelName := "presence-chat"
+
+	// Test on empty channel
+	members := hub.GetPresenceMembers(channelName)
+	if len(members) != 0 {
+		t.Errorf("Expected 0 presence members, got %d", len(members))
+	}
+
+	// Add user 1
+	member1 := &ChannelMember{
+		UserID:   "user1",
+		UserInfo: []byte(`{"name":"Alice"}`),
+	}
+	hub.Subscribe(client1, channelName, member1)
+
+	members = hub.GetPresenceMembers(channelName)
+	if len(members) != 1 {
+		t.Errorf("Expected 1 presence member, got %d", len(members))
+	}
+	if string(members["user1"]) != `{"name":"Alice"}` {
+		t.Errorf("Expected user1 info to be `{\"name\":\"Alice\"}`, got %s", string(members["user1"]))
+	}
+
+	// Add user 2
+	member2 := &ChannelMember{
+		UserID:   "user2",
+		UserInfo: []byte(`{"name":"Bob"}`),
+	}
+	hub.Subscribe(client2, channelName, member2)
+
+	// Add another connection for user 1
+	member1_copy := &ChannelMember{
+		UserID:   "user1",
+		UserInfo: []byte(`{"name":"Alice"}`), // Same user info
+	}
+	hub.Subscribe(client3, channelName, member1_copy)
+
+	members = hub.GetPresenceMembers(channelName)
+	if len(members) != 2 {
+		t.Errorf("Expected 2 unique presence members, got %d", len(members))
+	}
+	if string(members["user1"]) != `{"name":"Alice"}` {
+		t.Errorf("Expected user1 info to be `{\"name\":\"Alice\"}`, got %s", string(members["user1"]))
+	}
+	if string(members["user2"]) != `{"name":"Bob"}` {
+		t.Errorf("Expected user2 info to be `{\"name\":\"Bob\"}`, got %s", string(members["user2"]))
 	}
 }
