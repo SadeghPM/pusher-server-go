@@ -1,22 +1,29 @@
 package core
 
 import (
+	"encoding/json"
 	"sync"
 )
+
+// ChannelMember holds data about a user subscribed to a presence channel.
+type ChannelMember struct {
+	UserID   string
+	UserInfo json.RawMessage
+}
 
 // AppHub tracks the state for a single tenant (application).
 type AppHub struct {
 	mu       sync.RWMutex
 	AppID    string
 	Clients  map[string]*Client
-	Channels map[string]map[*Client]bool
+	Channels map[string]map[*Client]*ChannelMember
 }
 
 func NewAppHub(appID string) *AppHub {
 	return &AppHub{
 		AppID:    appID,
 		Clients:  make(map[string]*Client),
-		Channels: make(map[string]map[*Client]bool),
+		Channels: make(map[string]map[*Client]*ChannelMember),
 	}
 }
 
@@ -35,8 +42,28 @@ func (h *AppHub) UnregisterClient(client *Client) {
 
 		// Remove from all channels
 		for channelName, subscribers := range h.Channels {
-			if _, ok := subscribers[client]; ok {
+			if member, ok := subscribers[client]; ok {
 				delete(subscribers, client)
+
+				// If presence channel, check if this was the last connection for this user
+				if member != nil {
+					hasOtherConnections := false
+					for _, m := range subscribers {
+						if m != nil && m.UserID == member.UserID {
+							hasOtherConnections = true
+							break
+						}
+					}
+					if !hasOtherConnections {
+						// It was the last connection, we should broadcast member_removed,
+						// but since we are holding the lock, we should enqueue it or handle it in websocket.go.
+						// Actually, we can just broadcast it right here if we use a goroutine, or we can add a method
+						// to broadcast safely. To avoid deadlock, we can spin up a goroutine.
+						payload := []byte(`{"event":"pusher_internal:member_removed","channel":"` + channelName + `","data":"{\"user_id\":\"` + member.UserID + `\"}"}`)
+						go h.BroadcastToChannel(channelName, payload, "")
+					}
+				}
+
 				if len(subscribers) == 0 {
 					delete(h.Channels, channelName)
 				}
@@ -46,14 +73,82 @@ func (h *AppHub) UnregisterClient(client *Client) {
 	}
 }
 
-func (h *AppHub) Subscribe(client *Client, channel string) {
+func (h *AppHub) Unsubscribe(client *Client, channel string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if subscribers, ok := h.Channels[channel]; ok {
+		if member, ok := subscribers[client]; ok {
+			delete(subscribers, client)
+
+			// If presence channel, check if this was the last connection for this user
+			if member != nil {
+				hasOtherConnections := false
+				for _, m := range subscribers {
+					if m != nil && m.UserID == member.UserID {
+						hasOtherConnections = true
+						break
+					}
+				}
+				if !hasOtherConnections {
+					payload := []byte(`{"event":"pusher_internal:member_removed","channel":"` + channel + `","data":"{\"user_id\":\"` + member.UserID + `\"}"}`)
+					go h.BroadcastToChannel(channel, payload, "")
+				}
+			}
+
+			if len(subscribers) == 0 {
+				delete(h.Channels, channel)
+			}
+		}
+	}
+}
+
+func (h *AppHub) Subscribe(client *Client, channel string, member *ChannelMember) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	if h.Channels[channel] == nil {
-		h.Channels[channel] = make(map[*Client]bool)
+		h.Channels[channel] = make(map[*Client]*ChannelMember)
 	}
-	h.Channels[channel][client] = true
+
+	isNewUser := false
+	if member != nil {
+		// Check if user is already in channel
+		userExists := false
+		for _, existingMember := range h.Channels[channel] {
+			if existingMember != nil && existingMember.UserID == member.UserID {
+				userExists = true
+				break
+			}
+		}
+		if !userExists {
+			isNewUser = true
+		}
+	}
+
+	h.Channels[channel][client] = member
+	return isNewUser
+}
+
+func (h *AppHub) RLockChannels(cb func(map[string]map[*Client]*ChannelMember)) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	cb(h.Channels)
+}
+
+func (h *AppHub) GetPresenceMembers(channel string) map[string]json.RawMessage {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	members := make(map[string]json.RawMessage)
+	if subscribers, ok := h.Channels[channel]; ok {
+		for _, member := range subscribers {
+			if member != nil {
+				members[member.UserID] = member.UserInfo
+			}
+		}
+	}
+	return members
 }
 
 func (h *AppHub) BroadcastToChannel(channel string, message []byte, excludeSocketID string) {
