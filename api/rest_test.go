@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -124,6 +125,87 @@ func TestHandleEventsInvalidJSON(t *testing.T) {
 		authKey, authTimestamp, authVersion, bodyMD5, authSignature)
 
 	req := httptest.NewRequest("POST", url, bytes.NewBuffer(body))
+	rr := httptest.NewRecorder()
+
+	api.HandleEvents(rr, req, "123")
+
+	if status := rr.Code; status != http.StatusBadRequest {
+		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusBadRequest)
+	}
+}
+
+func TestHandleEventsMethodNotAllowed(t *testing.T) {
+	cfg := &config.Config{
+		Port: "8080",
+		Apps: []config.AppConfig{
+			{
+				AppID:     "123",
+				AppKey:    "test-key",
+				AppSecret: "test-secret",
+			},
+		},
+	}
+	globalHub := core.NewGlobalHub()
+	api := NewAPI(globalHub, cfg)
+
+	url := "/apps/123/events"
+	req := httptest.NewRequest("GET", url, nil)
+	rr := httptest.NewRecorder()
+
+	api.HandleEvents(rr, req, "123")
+
+	if status := rr.Code; status != http.StatusMethodNotAllowed {
+		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestHandleEventsAppNotFound(t *testing.T) {
+	cfg := &config.Config{
+		Port: "8080",
+		Apps: []config.AppConfig{
+			{
+				AppID:     "123",
+				AppKey:    "test-key",
+				AppSecret: "test-secret",
+			},
+		},
+	}
+	globalHub := core.NewGlobalHub()
+	api := NewAPI(globalHub, cfg)
+
+	url := "/apps/999/events"
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer([]byte(`{}`)))
+	rr := httptest.NewRecorder()
+
+	api.HandleEvents(rr, req, "999")
+
+	if status := rr.Code; status != http.StatusNotFound {
+		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusNotFound)
+	}
+}
+
+type errReader int
+
+func (errReader) Read(p []byte) (n int, err error) {
+	return 0, errors.New("test error")
+}
+
+func TestHandleEventsBadBody(t *testing.T) {
+	cfg := &config.Config{
+		Port: "8080",
+		Apps: []config.AppConfig{
+			{
+				AppID:     "123",
+				AppKey:    "test-key",
+				AppSecret: "test-secret",
+			},
+		},
+	}
+	globalHub := core.NewGlobalHub()
+	api := NewAPI(globalHub, cfg)
+
+	url := "/apps/123/events"
+	req := httptest.NewRequest("POST", url, errReader(0))
 	rr := httptest.NewRecorder()
 
 	api.HandleEvents(rr, req, "123")
