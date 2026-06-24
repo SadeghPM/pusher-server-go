@@ -27,14 +27,27 @@ var upgrader = websocket.Upgrader{
 
 // PusherEvent standard protocol event wrapper
 type PusherEvent struct {
-	Event string          `json:"event"`
-	Data  json.RawMessage `json:"data"` // Kept as raw so we can extract JSON payload or string
+	Event   string          `json:"event"`
+	Channel string          `json:"channel,omitempty"`
+	Data    json.RawMessage `json:"data"` // Kept as raw so we can extract JSON payload or string
 }
 
 // PusherSubscribeData payload for subscribe event
 type PusherSubscribeData struct {
+	Channel     string `json:"channel"`
+	Auth        string `json:"auth,omitempty"`
+	ChannelData string `json:"channel_data,omitempty"`
+}
+
+// PusherUnsubscribeData payload for unsubscribe event
+type PusherUnsubscribeData struct {
 	Channel string `json:"channel"`
-	Auth    string `json:"auth,omitempty"`
+}
+
+// ChannelData represents the decoded channel_data for presence channels
+type ChannelData struct {
+	UserID   string          `json:"user_id"`
+	UserInfo json.RawMessage `json:"user_info,omitempty"`
 }
 
 type Server struct {
@@ -180,10 +193,19 @@ func (s *Server) handleMessage(client *core.Client, message []byte, appSecret, a
 		}
 
 		if subData.Channel != "" {
-			if strings.HasPrefix(subData.Channel, "private-") {
+			isPrivate := strings.HasPrefix(subData.Channel, "private-")
+			isPresence := strings.HasPrefix(subData.Channel, "presence-")
+
+			var member *core.ChannelMember
+			var presenceData ChannelData
+
+			if isPrivate || isPresence {
 				// Verify signature
 				// Format: socket_id:channel_name
 				toSign := fmt.Sprintf("%s:%s", client.SocketID, subData.Channel)
+				if isPresence {
+					toSign = fmt.Sprintf("%s:%s:%s", client.SocketID, subData.Channel, subData.ChannelData)
+				}
 				expectedSig := generateSignature(appSecret, toSign)
 
 				// Auth string format is app_key:signature
@@ -195,13 +217,119 @@ func (s *Server) handleMessage(client *core.Client, message []byte, appSecret, a
 					client.Send <- []byte(errorPayload)
 					return
 				}
+
+				if isPresence {
+					if err := json.Unmarshal([]byte(subData.ChannelData), &presenceData); err == nil {
+						member = &core.ChannelMember{
+							UserID:   presenceData.UserID,
+							UserInfo: presenceData.UserInfo,
+						}
+					}
+				}
 			}
 
-			client.AppHub.Subscribe(client, subData.Channel)
+			isNewUser := client.AppHub.Subscribe(client, subData.Channel, member)
 
-			// Confirm subscription
-			successPayload := fmt.Sprintf(`{"event":"pusher_internal:subscription_succeeded","channel":"%s","data":"{}"}`, subData.Channel)
-			client.Send <- []byte(successPayload)
+			if isPresence {
+				membersMap := client.AppHub.GetPresenceMembers(subData.Channel)
+
+				ids := make([]string, 0, len(membersMap))
+				for id := range membersMap {
+					ids = append(ids, id)
+				}
+
+				presenceHash := map[string]interface{}{
+					"presence": map[string]interface{}{
+						"ids":   ids,
+						"hash":  membersMap,
+						"count": len(membersMap),
+					},
+				}
+
+				presenceHashBytes, _ := json.Marshal(presenceHash)
+				safeDataStringBytes, _ := json.Marshal(string(presenceHashBytes))
+
+				successPayload := fmt.Sprintf(`{"event":"pusher_internal:subscription_succeeded","channel":"%s","data":%s}`, subData.Channel, safeDataStringBytes)
+				client.Send <- []byte(successPayload)
+
+				if isNewUser && member != nil {
+					userInfoStr := "{}"
+					if member.UserInfo != nil {
+						userInfoStr = string(member.UserInfo)
+					}
+
+					memberData := fmt.Sprintf(`{"user_id":"%s","user_info":%s}`, member.UserID, userInfoStr)
+					safeMemberDataBytes, _ := json.Marshal(memberData)
+
+					memberAddedPayload := fmt.Sprintf(`{"event":"pusher_internal:member_added","channel":"%s","data":%s}`, subData.Channel, safeMemberDataBytes)
+					client.AppHub.BroadcastToChannel(subData.Channel, []byte(memberAddedPayload), client.SocketID)
+				}
+			} else {
+				// Confirm subscription for public/private
+				successPayload := fmt.Sprintf(`{"event":"pusher_internal:subscription_succeeded","channel":"%s","data":"{}"}`, subData.Channel)
+				client.Send <- []byte(successPayload)
+			}
+		}
+
+	case "pusher:unsubscribe":
+		var unsubData PusherUnsubscribeData
+
+		var dataStr string
+		err := json.Unmarshal(event.Data, &dataStr)
+		if err == nil {
+			json.Unmarshal([]byte(dataStr), &unsubData)
+		} else {
+			json.Unmarshal(event.Data, &unsubData)
+		}
+
+		if unsubData.Channel != "" {
+			client.AppHub.Unsubscribe(client, unsubData.Channel)
+		}
+
+	default:
+		if strings.HasPrefix(event.Event, "client-") {
+			// Find the channel from the event (the wrapper PusherEvent already extracts it for client events usually)
+			// But for double encoding sometimes it's just event.Channel
+			channelName := event.Channel
+
+			// If not extracted, try parsing the channel out manually if it was somehow nested differently,
+			// but Pusher standard places `channel` alongside `event` and `data` in the JSON structure.
+
+			if channelName != "" {
+				isPrivate := strings.HasPrefix(channelName, "private-")
+				isPresence := strings.HasPrefix(channelName, "presence-")
+
+				if isPrivate || isPresence {
+					// Verify client is subscribed to this channel
+					isSubscribed := false
+					var member *core.ChannelMember
+
+					client.AppHub.RLockChannels(func(channels map[string]map[*core.Client]*core.ChannelMember) {
+						if subscribers, ok := channels[channelName]; ok {
+							if m, ok := subscribers[client]; ok {
+								isSubscribed = true
+								member = m
+							}
+						}
+					})
+
+					if isSubscribed {
+						// Double encoding: standard Pusher channels protocol requires stringified JSON.
+						// Wait, client events format: {"event": "client-...", "channel": "presence-...", "data": ...}
+
+						dataStr := string(event.Data)
+						if isPresence && member != nil {
+							// Append user_id to the event for presence channels
+							// To do this we serialize it properly
+							payload := fmt.Sprintf(`{"event":"%s","channel":"%s","data":%s,"user_id":"%s"}`, event.Event, channelName, dataStr, member.UserID)
+							client.AppHub.BroadcastToChannel(channelName, []byte(payload), client.SocketID)
+						} else {
+							payload := fmt.Sprintf(`{"event":"%s","channel":"%s","data":%s}`, event.Event, channelName, dataStr)
+							client.AppHub.BroadcastToChannel(channelName, []byte(payload), client.SocketID)
+						}
+					}
+				}
+			}
 		}
 	}
 }

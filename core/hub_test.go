@@ -26,7 +26,7 @@ func TestAppHubSubscription(t *testing.T) {
 	client := &Client{SocketID: "123.456", Send: make(chan []byte)}
 	hub.RegisterClient(client)
 
-	hub.Subscribe(client, "my-channel")
+	hub.Subscribe(client, "my-channel", nil)
 
 	if len(hub.Channels["my-channel"]) != 1 {
 		t.Errorf("Expected 1 subscriber in channel, got %d", len(hub.Channels["my-channel"]))
