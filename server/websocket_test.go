@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -349,4 +350,55 @@ func TestAppNotFound(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("Expected status %d, got %d", http.StatusNotFound, resp.StatusCode)
 	}
+}
+
+func TestGenerateSocketIDUniqueness(t *testing.T) {
+	// Sequential check
+	t.Run("Sequential", func(t *testing.T) {
+		const numIterations = 10000
+		seen := make(map[string]bool, numIterations)
+
+		for i := 0; i < numIterations; i++ {
+			id := generateSocketID()
+			if seen[id] {
+				t.Fatalf("Duplicate socket ID generated sequentially: %s at iteration %d", id, i)
+			}
+			seen[id] = true
+		}
+	})
+
+	// Concurrent check
+	t.Run("Concurrent", func(t *testing.T) {
+		const numGoroutines = 100
+		const numIterationsPerGoroutine = 1000
+		var wg sync.WaitGroup
+
+		var mu sync.Mutex
+		seen := make(map[string]bool, numGoroutines*numIterationsPerGoroutine)
+		duplicates := 0
+
+		wg.Add(numGoroutines)
+		for i := 0; i < numGoroutines; i++ {
+			go func() {
+				defer wg.Done()
+				for j := 0; j < numIterationsPerGoroutine; j++ {
+					id := generateSocketID()
+
+					mu.Lock()
+					if seen[id] {
+						duplicates++
+					} else {
+						seen[id] = true
+					}
+					mu.Unlock()
+				}
+			}()
+		}
+
+		wg.Wait()
+
+		if duplicates > 0 {
+			t.Fatalf("Found %d duplicate socket IDs generated concurrently", duplicates)
+		}
+	})
 }

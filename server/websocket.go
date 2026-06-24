@@ -101,10 +101,10 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey 
 	go s.readPump(client, appCfg.AppSecret, appCfg.AppKey)
 }
 
-var socketIDCounter uint32
+var socketIDCounter atomic.Uint64
 
 func generateSocketID() string {
-	counter := atomic.AddUint32(&socketIDCounter, 1)
+	counter := socketIDCounter.Add(1)
 	return fmt.Sprintf("%d.%d", time.Now().Unix(), counter)
 }
 
