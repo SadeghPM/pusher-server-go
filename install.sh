@@ -16,7 +16,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # 2. Determine OS and Architecture
-OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+OS="$(uname -s)"
 ARCH="$(uname -m)"
 case "${ARCH}" in
   x86_64) ARCH="x86_64" ;;
@@ -27,8 +27,8 @@ case "${ARCH}" in
 esac
 
 echo -e "${YELLOW}Fetching latest release info...${NC}"
-REPO="jules/pusher-clone"
-LATEST_RELEASE_URL="" # Set to blank to fall back to local binary for testing
+REPO="SadeghPM/pusher-server-go"
+LATEST_RELEASE_URL=$(curl -s https://api.github.com/repos/${REPO}/releases/latest | grep "browser_download_url.*${OS}_${ARCH}\.tar\.gz" | cut -d '"' -f 4)
 
 INSTALL_DIR="/opt/pusher-clone"
 USER="pusher-clone"
@@ -65,9 +65,32 @@ chmod +x ${INSTALL_DIR}/pusher-clone 2>/dev/null || true
 # 7. Generate YAML config
 echo ""
 echo -e "${GREEN}--- Configuration ---${NC}"
+
+check_port() {
+  local port=$1
+  if command -v ss >/dev/null 2>&1; then
+    if ss -tuln | awk '{print $5}' | grep -q -E ":${port}$"; then return 1; fi
+  elif command -v netstat >/dev/null 2>&1; then
+    if netstat -tuln | awk '{print $4}' | grep -q -E ":${port}$"; then return 1; fi
+  else
+    # Fallback bash tcp check
+    if (echo >/dev/tcp/127.0.0.1/${port}) >/dev/null 2>&1; then return 1; fi
+  fi
+  return 0
+}
+
+read -p "Enter port for Pusher Clone [8080]: " INPUT_PORT
+PORT=${INPUT_PORT:-8080}
+
+while ! check_port "$PORT"; do
+  echo -e "${RED}Port ${PORT} is currently in use.${NC}"
+  read -p "Enter a different port: " PORT
+done
+
+echo -e "${GREEN}Using port ${PORT}.${NC}"
+
 # Default automated config setup
-APP_ID="1"
-PORT="8080"
+APP_ID=$(cat /dev/urandom | tr -dc '0-9' | fold -w 6 | head -n 1)
 RANDOM_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
 RANDOM_SECRET=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
 APP_KEY=${RANDOM_KEY}
