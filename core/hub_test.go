@@ -33,6 +33,19 @@ func TestAppHubSubscription(t *testing.T) {
 	}
 }
 
+func TestAppHubUnsubscribeNonExistentChannel(t *testing.T) {
+	hub := NewAppHub("test-app")
+	client := &Client{SocketID: "123.456", Send: make(chan []byte)}
+	hub.RegisterClient(client)
+
+	// Attempt to unsubscribe from a channel that doesn't exist
+	hub.Unsubscribe(client, "non-existent-channel")
+
+	if len(hub.Channels) != 0 {
+		t.Errorf("Expected 0 channels, got %d", len(hub.Channels))
+	}
+}
+
 func TestGlobalHub(t *testing.T) {
 	global := NewGlobalHub()
 
