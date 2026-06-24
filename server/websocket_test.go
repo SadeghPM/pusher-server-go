@@ -256,6 +256,48 @@ func TestSubscribePrivateChannelInvalidSignature(t *testing.T) {
 	}
 }
 
+func TestSubscribePrivateChannelMissingAuth(t *testing.T) {
+	ts, _, _, appKey, _ := setupTestServer()
+	defer ts.Close()
+
+	ws, _, err := connectWebSocket(ts, appKey)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer ws.Close()
+
+	ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err = ws.ReadMessage() // Read connection_established
+	if err != nil {
+		t.Fatalf("Failed to read connection_established message: %v", err)
+	}
+
+	channelName := "private-my-channel"
+
+	// Send subscribe event WITHOUT auth
+	subEvent := fmt.Sprintf(`{"event":"pusher:subscribe","data":{"channel":"%s"}}`, channelName)
+	err = ws.WriteMessage(websocket.TextMessage, []byte(subEvent))
+	if err != nil {
+		t.Fatalf("Failed to write subscribe message: %v", err)
+	}
+
+	// Wait for error event
+	_, p, err := ws.ReadMessage()
+	if err != nil {
+		t.Fatalf("Failed to read error message: %v", err)
+	}
+
+	var event struct {
+		Event string          `json:"event"`
+		Data  json.RawMessage `json:"data"`
+	}
+	json.Unmarshal(p, &event)
+
+	if event.Event != "pusher:error" {
+		t.Errorf("Expected event 'pusher:error', got '%s'", event.Event)
+	}
+}
+
 func TestPingPong(t *testing.T) {
 	ts, _, _, appKey, _ := setupTestServer()
 	defer ts.Close()
