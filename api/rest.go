@@ -119,13 +119,12 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 	// 3. Broadcast to WebSockets
 	appHub := a.GlobalHub.GetOrCreateAppHub(appID)
 
+	// Construct the WebSocket event message
+	// Note: The data field in the REST payload is already a stringified JSON.
+	// We pass it directly into the "data" field of our websocket message.
+	escapedData, _ := json.Marshal(payload.Data) // Ensures proper string escaping if needed, but usually it's already a string.
+
 	for _, channel := range channels {
-		// Construct the WebSocket event message
-		// Note: The data field in the REST payload is already a stringified JSON.
-		// We pass it directly into the "data" field of our websocket message.
-
-		escapedData, _ := json.Marshal(payload.Data) // Ensures proper string escaping if needed, but usually it's already a string.
-
 		// If payload.Data is already stringified JSON, using string format directly works for Pusher clients
 		message := fmt.Sprintf(`{"event":"%s","channel":"%s","data":%s}`, payload.Name, channel, escapedData)
 
