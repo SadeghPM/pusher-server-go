@@ -13,17 +13,19 @@ type ChannelMember struct {
 
 // AppHub tracks the state for a single tenant (application).
 type AppHub struct {
-	mu       sync.RWMutex
-	AppID    string
-	Clients  map[string]*Client
-	Channels map[string]map[*Client]*ChannelMember
+	mu             sync.RWMutex
+	AppID          string
+	Clients        map[string]*Client
+	Channels       map[string]map[*Client]*ChannelMember
+	PresenceCounts map[string]map[string]int
 }
 
 func NewAppHub(appID string) *AppHub {
 	return &AppHub{
-		AppID:    appID,
-		Clients:  make(map[string]*Client),
-		Channels: make(map[string]map[*Client]*ChannelMember),
+		AppID:          appID,
+		Clients:        make(map[string]*Client),
+		Channels:       make(map[string]map[*Client]*ChannelMember),
+		PresenceCounts: make(map[string]map[string]int),
 	}
 }
 
@@ -47,14 +49,9 @@ func (h *AppHub) UnregisterClient(client *Client) {
 
 				// If presence channel, check if this was the last connection for this user
 				if member != nil {
-					hasOtherConnections := false
-					for _, m := range subscribers {
-						if m != nil && m.UserID == member.UserID {
-							hasOtherConnections = true
-							break
-						}
-					}
-					if !hasOtherConnections {
+					h.PresenceCounts[channelName][member.UserID]--
+					if h.PresenceCounts[channelName][member.UserID] == 0 {
+						delete(h.PresenceCounts[channelName], member.UserID)
 						// It was the last connection, we should broadcast member_removed,
 						// but since we are holding the lock, we should enqueue it or handle it in websocket.go.
 						// Actually, we can just broadcast it right here if we use a goroutine, or we can add a method
@@ -66,6 +63,7 @@ func (h *AppHub) UnregisterClient(client *Client) {
 
 				if len(subscribers) == 0 {
 					delete(h.Channels, channelName)
+					delete(h.PresenceCounts, channelName)
 				}
 			}
 		}
@@ -83,14 +81,9 @@ func (h *AppHub) Unsubscribe(client *Client, channel string) {
 
 			// If presence channel, check if this was the last connection for this user
 			if member != nil {
-				hasOtherConnections := false
-				for _, m := range subscribers {
-					if m != nil && m.UserID == member.UserID {
-						hasOtherConnections = true
-						break
-					}
-				}
-				if !hasOtherConnections {
+				h.PresenceCounts[channel][member.UserID]--
+				if h.PresenceCounts[channel][member.UserID] == 0 {
+					delete(h.PresenceCounts[channel], member.UserID)
 					payload := []byte(`{"event":"pusher_internal:member_removed","channel":"` + channel + `","data":"{\"user_id\":\"` + member.UserID + `\"}"}`)
 					go h.BroadcastToChannel(channel, payload, "")
 				}
@@ -98,6 +91,7 @@ func (h *AppHub) Unsubscribe(client *Client, channel string) {
 
 			if len(subscribers) == 0 {
 				delete(h.Channels, channel)
+				delete(h.PresenceCounts, channel)
 			}
 		}
 	}
@@ -111,19 +105,16 @@ func (h *AppHub) Subscribe(client *Client, channel string, member *ChannelMember
 		h.Channels[channel] = make(map[*Client]*ChannelMember)
 	}
 
+	if h.PresenceCounts[channel] == nil {
+		h.PresenceCounts[channel] = make(map[string]int)
+	}
+
 	isNewUser := false
 	if member != nil {
-		// Check if user is already in channel
-		userExists := false
-		for _, existingMember := range h.Channels[channel] {
-			if existingMember != nil && existingMember.UserID == member.UserID {
-				userExists = true
-				break
-			}
-		}
-		if !userExists {
+		if h.PresenceCounts[channel][member.UserID] == 0 {
 			isNewUser = true
 		}
+		h.PresenceCounts[channel][member.UserID]++
 	}
 
 	h.Channels[channel][client] = member
