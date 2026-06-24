@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -100,8 +101,11 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey 
 	go s.readPump(client, appCfg.AppSecret, appCfg.AppKey)
 }
 
+var socketIDCounter uint32
+
 func generateSocketID() string {
-	return fmt.Sprintf("%d.%d", time.Now().Unix(), time.Now().UnixNano()%100000)
+	counter := atomic.AddUint32(&socketIDCounter, 1)
+	return fmt.Sprintf("%d.%d", time.Now().Unix(), counter)
 }
 
 func (s *Server) readPump(client *core.Client, appSecret, appKey string) {
@@ -143,21 +147,16 @@ func (s *Server) writePump(client *core.Client) {
 				return
 			}
 
-			w, err := client.Conn.NextWriter(websocket.TextMessage)
-			if err != nil {
+			if err := client.Conn.WriteMessage(websocket.TextMessage, message); err != nil {
 				return
 			}
-			w.Write(message)
 
-			// Add queued chat messages to the current websocket message.
+			// Send queued chat messages as separate websocket messages.
 			n := len(client.Send)
 			for i := 0; i < n; i++ {
-				w.Write([]byte{'\n'})
-				w.Write(<-client.Send)
-			}
-
-			if err := w.Close(); err != nil {
-				return
+				if err := client.Conn.WriteMessage(websocket.TextMessage, <-client.Send); err != nil {
+					return
+				}
 			}
 		case <-ticker.C:
 			client.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
