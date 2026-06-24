@@ -41,33 +41,15 @@ func (h *AppHub) UnregisterClient(client *Client) {
 		delete(h.Clients, client.SocketID)
 
 		// Remove from all channels
+		var channelsToRemove []string
 		for channelName, subscribers := range h.Channels {
-			if member, ok := subscribers[client]; ok {
-				delete(subscribers, client)
-
-				// If presence channel, check if this was the last connection for this user
-				if member != nil {
-					hasOtherConnections := false
-					for _, m := range subscribers {
-						if m != nil && m.UserID == member.UserID {
-							hasOtherConnections = true
-							break
-						}
-					}
-					if !hasOtherConnections {
-						// It was the last connection, we should broadcast member_removed,
-						// but since we are holding the lock, we should enqueue it or handle it in websocket.go.
-						// Actually, we can just broadcast it right here if we use a goroutine, or we can add a method
-						// to broadcast safely. To avoid deadlock, we can spin up a goroutine.
-						payload := []byte(`{"event":"pusher_internal:member_removed","channel":"` + channelName + `","data":"{\"user_id\":\"` + member.UserID + `\"}"}`)
-						go h.BroadcastToChannel(channelName, payload, "")
-					}
-				}
-
-				if len(subscribers) == 0 {
-					delete(h.Channels, channelName)
-				}
+			if _, ok := subscribers[client]; ok {
+				channelsToRemove = append(channelsToRemove, channelName)
 			}
+		}
+
+		for _, channelName := range channelsToRemove {
+			h.removeClientFromChannel(client, channelName)
 		}
 		close(client.Send)
 	}
@@ -77,29 +59,41 @@ func (h *AppHub) Unsubscribe(client *Client, channel string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if subscribers, ok := h.Channels[channel]; ok {
-		if member, ok := subscribers[client]; ok {
-			delete(subscribers, client)
+	h.removeClientFromChannel(client, channel)
+}
 
-			// If presence channel, check if this was the last connection for this user
-			if member != nil {
-				hasOtherConnections := false
-				for _, m := range subscribers {
-					if m != nil && m.UserID == member.UserID {
-						hasOtherConnections = true
-						break
-					}
-				}
-				if !hasOtherConnections {
-					payload := []byte(`{"event":"pusher_internal:member_removed","channel":"` + channel + `","data":"{\"user_id\":\"` + member.UserID + `\"}"}`)
-					go h.BroadcastToChannel(channel, payload, "")
-				}
-			}
+// removeClientFromChannel removes a client from a specific channel.
+// It must be called with h.mu.Lock() held.
+func (h *AppHub) removeClientFromChannel(client *Client, channel string) {
+	subscribers, ok := h.Channels[channel]
+	if !ok {
+		return
+	}
 
-			if len(subscribers) == 0 {
-				delete(h.Channels, channel)
+	member, ok := subscribers[client]
+	if !ok {
+		return
+	}
+
+	delete(subscribers, client)
+
+	// If presence channel, check if this was the last connection for this user
+	if member != nil {
+		hasOtherConnections := false
+		for _, m := range subscribers {
+			if m != nil && m.UserID == member.UserID {
+				hasOtherConnections = true
+				break
 			}
 		}
+		if !hasOtherConnections {
+			payload := []byte(`{"event":"pusher_internal:member_removed","channel":"` + channel + `","data":"{\"user_id\":\"` + member.UserID + `\"}"}`)
+			go h.BroadcastToChannel(channel, payload, "")
+		}
+	}
+
+	if len(subscribers) == 0 {
+		delete(h.Channels, channel)
 	}
 }
 
