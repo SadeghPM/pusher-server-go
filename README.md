@@ -61,7 +61,7 @@ Ensure the credentials in your Laravel `.env` match the ones in your `config.yam
 You can use the provided bash script to automatically download, configure, and install `pusher-clone` as a systemd service on Linux.
 
 ```bash
-sudo ./install.sh
+curl -sSL https://raw.githubusercontent.com/SadeghPM/pusher-server-go/main/install.sh | sudo bash
 ```
 
 The script will setup a multi-tenant `config.yaml` under `/opt/pusher-clone/config.yaml`.
