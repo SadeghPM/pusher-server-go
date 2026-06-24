@@ -35,6 +35,77 @@ type TriggerPayload struct {
 	SocketID string   `json:"socket_id,omitempty"`
 }
 
+func (a *API) authenticateRequest(r *http.Request, appCfg *config.AppConfig, body []byte) (int, error) {
+	// 1. Authenticate request using HMAC SHA256
+	// Method\nPath\nQuery params (alphabetical)
+	authKey := r.URL.Query().Get("auth_key")
+	authTimestamp := r.URL.Query().Get("auth_timestamp")
+	authVersion := r.URL.Query().Get("auth_version")
+	bodyMD5 := r.URL.Query().Get("body_md5")
+	authSignature := r.URL.Query().Get("auth_signature")
+
+	if authKey != appCfg.AppKey {
+		return http.StatusUnauthorized, fmt.Errorf("Unauthorized")
+	}
+
+	// Verify body MD5
+	hasher := md5.New()
+	hasher.Write(body)
+	expectedMD5 := hex.EncodeToString(hasher.Sum(nil))
+
+	if bodyMD5 != expectedMD5 {
+		return http.StatusUnauthorized, fmt.Errorf("Invalid body MD5")
+	}
+
+	// Reconstruct signature string
+	// Params must be ordered alphabetically: auth_key, auth_timestamp, auth_version, body_md5
+	queryParams := fmt.Sprintf("auth_key=%s&auth_timestamp=%s&auth_version=%s&body_md5=%s", authKey, authTimestamp, authVersion, bodyMD5)
+
+	stringToSign := fmt.Sprintf("%s\n%s\n%s", r.Method, r.URL.Path, queryParams)
+
+	mac := hmac.New(sha256.New, []byte(appCfg.AppSecret))
+	mac.Write([]byte(stringToSign))
+	expectedSignature := hex.EncodeToString(mac.Sum(nil))
+
+	if authSignature != expectedSignature {
+		return http.StatusUnauthorized, fmt.Errorf("Invalid signature")
+	}
+
+	return http.StatusOK, nil
+}
+
+func (a *API) broadcastEvent(appID string, body []byte) (int, error) {
+	// 2. Parse payload
+	var payload TriggerPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return http.StatusBadRequest, fmt.Errorf("Invalid JSON")
+	}
+
+	// Gather channels
+	channels := payload.Channels
+	if payload.Channel != "" {
+		channels = append(channels, payload.Channel)
+	}
+
+	// 3. Broadcast to WebSockets
+	appHub := a.GlobalHub.GetOrCreateAppHub(appID)
+
+	for _, channel := range channels {
+		// Construct the WebSocket event message
+		// Note: The data field in the REST payload is already a stringified JSON.
+		// We pass it directly into the "data" field of our websocket message.
+
+		escapedData, _ := json.Marshal(payload.Data) // Ensures proper string escaping if needed, but usually it's already a string.
+
+		// If payload.Data is already stringified JSON, using string format directly works for Pusher clients
+		message := fmt.Sprintf(`{"event":"%s","channel":"%s","data":%s}`, payload.Name, channel, escapedData)
+
+		appHub.BroadcastToChannel(channel, []byte(message), payload.SocketID)
+	}
+
+	return http.StatusOK, nil
+}
+
 func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -62,71 +133,14 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 	}
 	defer r.Body.Close()
 
-	// 1. Authenticate request using HMAC SHA256
-	// Method\nPath\nQuery params (alphabetical)
-	authKey := r.URL.Query().Get("auth_key")
-	authTimestamp := r.URL.Query().Get("auth_timestamp")
-	authVersion := r.URL.Query().Get("auth_version")
-	bodyMD5 := r.URL.Query().Get("body_md5")
-	authSignature := r.URL.Query().Get("auth_signature")
-
-	if authKey != appCfg.AppKey {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	if status, err := a.authenticateRequest(r, appCfg, body); err != nil {
+		http.Error(w, err.Error(), status)
 		return
 	}
 
-	// Verify body MD5
-	hasher := md5.New()
-	hasher.Write(body)
-	expectedMD5 := hex.EncodeToString(hasher.Sum(nil))
-
-	if bodyMD5 != expectedMD5 {
-		http.Error(w, "Invalid body MD5", http.StatusUnauthorized)
+	if status, err := a.broadcastEvent(appID, body); err != nil {
+		http.Error(w, err.Error(), status)
 		return
-	}
-
-	// Reconstruct signature string
-	// Params must be ordered alphabetically: auth_key, auth_timestamp, auth_version, body_md5
-	queryParams := fmt.Sprintf("auth_key=%s&auth_timestamp=%s&auth_version=%s&body_md5=%s", authKey, authTimestamp, authVersion, bodyMD5)
-
-	stringToSign := fmt.Sprintf("%s\n%s\n%s", r.Method, r.URL.Path, queryParams)
-
-	mac := hmac.New(sha256.New, []byte(appCfg.AppSecret))
-	mac.Write([]byte(stringToSign))
-	expectedSignature := hex.EncodeToString(mac.Sum(nil))
-
-	if authSignature != expectedSignature {
-		http.Error(w, "Invalid signature", http.StatusUnauthorized)
-		return
-	}
-
-	// 2. Parse payload
-	var payload TriggerPayload
-	if err := json.Unmarshal(body, &payload); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	// Gather channels
-	channels := payload.Channels
-	if payload.Channel != "" {
-		channels = append(channels, payload.Channel)
-	}
-
-	// 3. Broadcast to WebSockets
-	appHub := a.GlobalHub.GetOrCreateAppHub(appID)
-
-	for _, channel := range channels {
-		// Construct the WebSocket event message
-		// Note: The data field in the REST payload is already a stringified JSON.
-		// We pass it directly into the "data" field of our websocket message.
-
-		escapedData, _ := json.Marshal(payload.Data) // Ensures proper string escaping if needed, but usually it's already a string.
-
-		// If payload.Data is already stringified JSON, using string format directly works for Pusher clients
-		message := fmt.Sprintf(`{"event":"%s","channel":"%s","data":%s}`, payload.Name, channel, escapedData)
-
-		appHub.BroadcastToChannel(channel, []byte(message), payload.SocketID)
 	}
 
 	// Respond with success
