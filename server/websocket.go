@@ -54,12 +54,20 @@ type ChannelData struct {
 type Server struct {
 	GlobalHub *core.GlobalHub
 	Config    *config.Config
+	appByKey  map[string]*config.AppConfig
 }
 
 func NewServer(globalHub *core.GlobalHub, cfg *config.Config) *Server {
+	appMap := make(map[string]*config.AppConfig)
+	for i := range cfg.Apps {
+		app := &cfg.Apps[i]
+		appMap[app.AppKey] = app
+	}
+
 	return &Server{
 		GlobalHub: globalHub,
 		Config:    cfg,
+		appByKey:  appMap,
 	}
 }
 
@@ -68,14 +76,7 @@ func NewServer(globalHub *core.GlobalHub, cfg *config.Config) *Server {
 // so we need a unified handler that takes the appKey.
 func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey string) {
 	// Find the matching AppConfig
-	var appCfg *config.AppConfig
-	for _, app := range s.Config.Apps {
-		if app.AppKey == appKey {
-			appCfg = &app
-			break
-		}
-	}
-
+	appCfg := s.appByKey[appKey]
 	if appCfg == nil {
 		http.Error(w, "App not found", http.StatusNotFound)
 		return

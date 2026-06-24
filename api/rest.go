@@ -17,12 +17,20 @@ import (
 type API struct {
 	GlobalHub *core.GlobalHub
 	Config    *config.Config
+	appByID   map[string]*config.AppConfig
 }
 
 func NewAPI(globalHub *core.GlobalHub, cfg *config.Config) *API {
+	appMap := make(map[string]*config.AppConfig)
+	for i := range cfg.Apps {
+		app := &cfg.Apps[i]
+		appMap[app.AppID] = app
+	}
+
 	return &API{
 		GlobalHub: globalHub,
 		Config:    cfg,
+		appByID:   appMap,
 	}
 }
 
@@ -42,14 +50,7 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 	}
 
 	// Find App Config
-	var appCfg *config.AppConfig
-	for _, app := range a.Config.Apps {
-		if app.AppID == appID {
-			appCfg = &app
-			break
-		}
-	}
-
+	appCfg := a.appByID[appID]
 	if appCfg == nil {
 		http.Error(w, "App not found", http.StatusNotFound)
 		return
