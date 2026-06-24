@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -47,11 +48,15 @@ func setupTestServer() (*httptest.Server, *Server, string, string, string) {
 }
 
 func connectWebSocket(ts *httptest.Server, appKey string) (*websocket.Conn, *http.Response, error) {
+	return connectWebSocketWithHeaders(ts, appKey, nil)
+}
+
+func connectWebSocketWithHeaders(ts *httptest.Server, appKey string, headers http.Header) (*websocket.Conn, *http.Response, error) {
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/app/" + appKey
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 5 * time.Second,
 	}
-	return dialer.Dial(wsURL, nil)
+	return dialer.Dial(wsURL, headers)
 }
 
 func TestConnectionEstablished(t *testing.T) {
@@ -348,5 +353,142 @@ func TestAppNotFound(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("Expected status %d, got %d", http.StatusNotFound, resp.StatusCode)
+	}
+}
+
+func TestCheckOriginAllowedOrigins(t *testing.T) {
+	appID := "test-origin-app"
+	appKey := "test-origin-key"
+	appSecret := "test-origin-secret"
+
+	cfg := &config.Config{
+		Port: "8080",
+		Apps: []config.AppConfig{
+			{
+				AppID:          appID,
+				AppKey:         appKey,
+				AppSecret:      appSecret,
+				AllowedOrigins: []string{"allowed.com", "*.wildcard.com"},
+			},
+		},
+	}
+	globalHub := core.NewGlobalHub()
+	server := NewServer(globalHub, cfg)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/app/", func(w http.ResponseWriter, r *http.Request) {
+		pathAppKey := strings.TrimPrefix(r.URL.Path, "/app/")
+		server.HandleWebSocket(w, r, pathAppKey)
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	tests := []struct {
+		name       string
+		origin     string
+		shouldFail bool
+	}{
+		{"No Origin", "", false},
+		{"Exact Match", "http://allowed.com", false},
+		{"Wildcard Match", "https://sub.wildcard.com", false},
+		{"Wildcard Deep Match", "https://a.b.wildcard.com", false},
+		{"Blocked Origin", "http://evil.com", true},
+		{"Prefix Trick Blocked", "http://allowed.com.evil.com", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			headers := make(http.Header)
+			if tt.origin != "" {
+				headers.Set("Origin", tt.origin)
+			}
+
+			ws, resp, err := connectWebSocketWithHeaders(ts, appKey, headers)
+
+			if tt.shouldFail {
+				if err == nil {
+					ws.Close()
+					t.Fatalf("Expected connection to fail for origin %s", tt.origin)
+				}
+				if resp.StatusCode != http.StatusForbidden {
+					t.Errorf("Expected status %d, got %d", http.StatusForbidden, resp.StatusCode)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("Expected connection to succeed for origin %s, got error: %v", tt.origin, err)
+				}
+				ws.Close()
+			}
+		})
+	}
+}
+
+func TestCheckOriginDefaultSameOrigin(t *testing.T) {
+	appID := "test-origin-app"
+	appKey := "test-origin-key"
+	appSecret := "test-origin-secret"
+
+	cfg := &config.Config{
+		Port: "8080",
+		Apps: []config.AppConfig{
+			{
+				AppID:          appID,
+				AppKey:         appKey,
+				AppSecret:      appSecret,
+				AllowedOrigins: []string{}, // Empty means same-origin fallback
+			},
+		},
+	}
+	globalHub := core.NewGlobalHub()
+	server := NewServer(globalHub, cfg)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/app/", func(w http.ResponseWriter, r *http.Request) {
+		pathAppKey := strings.TrimPrefix(r.URL.Path, "/app/")
+		server.HandleWebSocket(w, r, pathAppKey)
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	// Extract the host part from ts.URL (e.g., "127.0.0.1:something")
+	hostUrl, _ := url.Parse(ts.URL)
+	sameOrigin := "http://" + hostUrl.Host
+
+	tests := []struct {
+		name       string
+		origin     string
+		shouldFail bool
+	}{
+		{"No Origin", "", false},
+		{"Same Origin", sameOrigin, false},
+		{"Cross Origin Blocked", "http://evil.com", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			headers := make(http.Header)
+			if tt.origin != "" {
+				headers.Set("Origin", tt.origin)
+			}
+
+			ws, resp, err := connectWebSocketWithHeaders(ts, appKey, headers)
+
+			if tt.shouldFail {
+				if err == nil {
+					ws.Close()
+					t.Fatalf("Expected connection to fail for origin %s", tt.origin)
+				}
+				if resp.StatusCode != http.StatusForbidden {
+					t.Errorf("Expected status %d, got %d", http.StatusForbidden, resp.StatusCode)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("Expected connection to succeed for origin %s, got error: %v", tt.origin, err)
+				}
+				ws.Close()
+			}
+		})
 	}
 }

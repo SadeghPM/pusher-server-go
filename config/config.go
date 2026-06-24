@@ -8,9 +8,10 @@ import (
 )
 
 type AppConfig struct {
-	AppID     string `yaml:"app_id"`
-	AppKey    string `yaml:"app_key"`
-	AppSecret string `yaml:"app_secret"`
+	AppID          string   `yaml:"app_id"`
+	AppKey         string   `yaml:"app_key"`
+	AppSecret      string   `yaml:"app_secret"`
+	AllowedOrigins []string `yaml:"allowed_origins"`
 }
 
 type Config struct {

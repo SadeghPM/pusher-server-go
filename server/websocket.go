@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -17,14 +18,6 @@ import (
 	"pusher-clone/config"
 	"pusher-clone/core"
 )
-
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for the clone
-	},
-}
 
 // PusherEvent standard protocol event wrapper
 type PusherEvent struct {
@@ -79,6 +72,47 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey 
 	if appCfg == nil {
 		http.Error(w, "App not found", http.StatusNotFound)
 		return
+	}
+
+	upgrader := websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin: func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return true
+			}
+
+			originURL, err := url.Parse(origin)
+			if err != nil {
+				return false
+			}
+
+			if len(appCfg.AllowedOrigins) == 0 {
+				return originURL.Host == r.Host
+			}
+
+			for _, allowed := range appCfg.AllowedOrigins {
+				if allowed == "*" {
+					return true
+				}
+
+				// Handle exact match
+				if allowed == originURL.Host {
+					return true
+				}
+
+				// Handle wildcard matching (e.g., *.domain.com)
+				if strings.HasPrefix(allowed, "*.") {
+					suffix := strings.TrimPrefix(allowed, "*")
+					if strings.HasSuffix(originURL.Host, suffix) {
+						return true
+					}
+				}
+			}
+
+			return false
+		},
 	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
