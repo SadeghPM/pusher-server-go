@@ -15,6 +15,32 @@ import (
 	"pusher-clone/core"
 )
 
+func TestHandleEventsBadAppID(t *testing.T) {
+	cfg := &config.Config{
+		Port: "8080",
+		Apps: []config.AppConfig{
+			{
+				AppID:     "123",
+				AppKey:    "test-key",
+				AppSecret: "test-secret",
+			},
+		},
+	}
+	globalHub := core.NewGlobalHub()
+	api := NewAPI(globalHub, cfg)
+
+	body := []byte(`{"name":"my-event","channel":"my-channel","data":"{\"message\":\"hello\"}"}`)
+
+	req := httptest.NewRequest("POST", "/apps/wrong-id/events", bytes.NewBuffer(body))
+	rr := httptest.NewRecorder()
+
+	api.HandleEvents(rr, req, "wrong-id")
+
+	if status := rr.Code; status != http.StatusNotFound {
+		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusNotFound)
+	}
+}
+
 func TestHandleEventsAuth(t *testing.T) {
 	cfg := &config.Config{
 		Port: "8080",
