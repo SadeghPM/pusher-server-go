@@ -13,17 +13,19 @@ type ChannelMember struct {
 
 // AppHub tracks the state for a single tenant (application).
 type AppHub struct {
-	mu       sync.RWMutex
-	AppID    string
-	Clients  map[string]*Client
-	Channels map[string]map[*Client]*ChannelMember
+	mu             sync.RWMutex
+	AppID          string
+	Clients        map[string]*Client
+	Channels       map[string]map[*Client]*ChannelMember
+	ClientChannels map[*Client]map[string]struct{}
 }
 
 func NewAppHub(appID string) *AppHub {
 	return &AppHub{
-		AppID:    appID,
-		Clients:  make(map[string]*Client),
-		Channels: make(map[string]map[*Client]*ChannelMember),
+		AppID:          appID,
+		Clients:        make(map[string]*Client),
+		Channels:       make(map[string]map[*Client]*ChannelMember),
+		ClientChannels: make(map[*Client]map[string]struct{}),
 	}
 }
 
@@ -40,34 +42,36 @@ func (h *AppHub) UnregisterClient(client *Client) {
 	if _, ok := h.Clients[client.SocketID]; ok {
 		delete(h.Clients, client.SocketID)
 
-		// Remove from all channels
-		for channelName, subscribers := range h.Channels {
-			if member, ok := subscribers[client]; ok {
-				delete(subscribers, client)
+		// Remove from all channels the client is subscribed to
+		if clientChannels, ok := h.ClientChannels[client]; ok {
+			for channelName := range clientChannels {
+				if subscribers, exists := h.Channels[channelName]; exists {
+					if member, found := subscribers[client]; found {
+						delete(subscribers, client)
 
-				// If presence channel, check if this was the last connection for this user
-				if member != nil {
-					hasOtherConnections := false
-					for _, m := range subscribers {
-						if m != nil && m.UserID == member.UserID {
-							hasOtherConnections = true
-							break
+						// If presence channel, check if this was the last connection for this user
+						if member != nil {
+							hasOtherConnections := false
+							for _, m := range subscribers {
+								if m != nil && m.UserID == member.UserID {
+									hasOtherConnections = true
+									break
+								}
+							}
+							if !hasOtherConnections {
+								// It was the last connection, we should broadcast member_removed
+								payload := []byte(`{"event":"pusher_internal:member_removed","channel":"` + channelName + `","data":"{\"user_id\":\"` + member.UserID + `\"}"}`)
+								go h.BroadcastToChannel(channelName, payload, "")
+							}
+						}
+
+						if len(subscribers) == 0 {
+							delete(h.Channels, channelName)
 						}
 					}
-					if !hasOtherConnections {
-						// It was the last connection, we should broadcast member_removed,
-						// but since we are holding the lock, we should enqueue it or handle it in websocket.go.
-						// Actually, we can just broadcast it right here if we use a goroutine, or we can add a method
-						// to broadcast safely. To avoid deadlock, we can spin up a goroutine.
-						payload := []byte(`{"event":"pusher_internal:member_removed","channel":"` + channelName + `","data":"{\"user_id\":\"` + member.UserID + `\"}"}`)
-						go h.BroadcastToChannel(channelName, payload, "")
-					}
-				}
-
-				if len(subscribers) == 0 {
-					delete(h.Channels, channelName)
 				}
 			}
+			delete(h.ClientChannels, client)
 		}
 		close(client.Send)
 	}
@@ -80,6 +84,7 @@ func (h *AppHub) Unsubscribe(client *Client, channel string) {
 	if subscribers, ok := h.Channels[channel]; ok {
 		if member, ok := subscribers[client]; ok {
 			delete(subscribers, client)
+			delete(h.ClientChannels[client], channel)
 
 			// If presence channel, check if this was the last connection for this user
 			if member != nil {
@@ -99,6 +104,9 @@ func (h *AppHub) Unsubscribe(client *Client, channel string) {
 			if len(subscribers) == 0 {
 				delete(h.Channels, channel)
 			}
+			if len(h.ClientChannels[client]) == 0 {
+				delete(h.ClientChannels, client)
+			}
 		}
 	}
 }
@@ -110,6 +118,11 @@ func (h *AppHub) Subscribe(client *Client, channel string, member *ChannelMember
 	if h.Channels[channel] == nil {
 		h.Channels[channel] = make(map[*Client]*ChannelMember)
 	}
+
+	if h.ClientChannels[client] == nil {
+		h.ClientChannels[client] = make(map[string]struct{})
+	}
+	h.ClientChannels[client][channel] = struct{}{}
 
 	isNewUser := false
 	if member != nil {
