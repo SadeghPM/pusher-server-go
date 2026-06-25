@@ -32,14 +32,6 @@ const (
 	maxMessageSize = 8192
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for the clone
-	},
-}
-
 // PusherEvent standard protocol event wrapper
 type PusherEvent struct {
 	Event   string          `json:"event"`
@@ -96,6 +88,26 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey 
 	if appCfg == nil {
 		http.Error(w, "App not found", http.StatusNotFound)
 		return
+	}
+
+	upgrader := websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin: func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return true // Allow requests without Origin header (e.g., direct WS clients like mobile apps)
+			}
+			if len(appCfg.AllowedOrigins) == 0 {
+				return true // If not configured, allow all
+			}
+			for _, allowed := range appCfg.AllowedOrigins {
+				if allowed == "*" || allowed == origin {
+					return true
+				}
+			}
+			return false
+		},
 	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
