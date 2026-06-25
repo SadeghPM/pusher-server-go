@@ -662,9 +662,9 @@ func TestWebSocketOriginValidation(t *testing.T) {
 				AllowedOrigins: []string{"*"},
 			},
 			{
-				AppID:          "test-app-3",
-				AppKey:         "test-key-3",
-				AppSecret:      "test-secret-3",
+				AppID:     "test-app-3",
+				AppKey:    "test-key-3",
+				AppSecret: "test-secret-3",
 				// AllowedOrigins omitted
 			},
 		},
