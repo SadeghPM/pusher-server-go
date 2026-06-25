@@ -96,12 +96,16 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey 
 	client := core.NewClient(appHub, conn, socketID)
 	appHub.RegisterClient(client)
 
+	if s.Config.Debug {
+		log.Printf("[DEBUG] Client connected: Socket ID %s (App ID: %s)", socketID, appCfg.AppID)
+	}
+
 	// Send connection established event
 	establishedPayload := fmt.Sprintf(`{"event":"pusher:connection_established","data":"{\"socket_id\":\"%s\",\"activity_timeout\":120}"}`, socketID)
 	client.Send <- []byte(establishedPayload)
 
 	go s.writePump(client)
-	go s.readPump(client, appCfg.AppSecret, appCfg.AppKey)
+	go s.readPump(client, appCfg.AppSecret, appCfg.AppKey, s.Config.Debug)
 }
 
 var socketIDCounter uint32
@@ -111,10 +115,13 @@ func generateSocketID() string {
 	return fmt.Sprintf("%d.%d", time.Now().Unix(), counter)
 }
 
-func (s *Server) readPump(client *core.Client, appSecret, appKey string) {
+func (s *Server) readPump(client *core.Client, appSecret, appKey string, debug bool) {
 	defer func() {
 		client.AppHub.UnregisterClient(client)
 		client.Conn.Close()
+		if debug {
+			log.Printf("[DEBUG] Client disconnected: Socket ID %s", client.SocketID)
+		}
 	}()
 
 	client.Conn.SetReadLimit(8192)
@@ -130,7 +137,7 @@ func (s *Server) readPump(client *core.Client, appSecret, appKey string) {
 			break
 		}
 
-		s.handleMessage(client, message, appSecret, appKey)
+		s.handleMessage(client, message, appSecret, appKey, debug)
 	}
 }
 
@@ -170,11 +177,14 @@ func (s *Server) writePump(client *core.Client) {
 	}
 }
 
-func (s *Server) handlePing(client *core.Client) {
+func (s *Server) handlePing(client *core.Client, debug bool) {
+	if debug {
+		log.Printf("[DEBUG] Ping received from Socket ID %s", client.SocketID)
+	}
 	client.Send <- []byte(`{"event":"pusher:pong","data":"{}"}`)
 }
 
-func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appSecret, appKey string) {
+func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appSecret, appKey string, debug bool) {
 	var subData PusherSubscribeData
 
 	// Try unmarshaling string first
@@ -225,6 +235,14 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appSecr
 
 		isNewUser := client.AppHub.Subscribe(client, subData.Channel, member)
 
+		if debug {
+			if isPresence && member != nil {
+				log.Printf("[DEBUG] User subscribed to presence channel %s: Socket ID %s, User ID %s", subData.Channel, client.SocketID, member.UserID)
+			} else {
+				log.Printf("[DEBUG] Client subscribed to channel %s: Socket ID %s", subData.Channel, client.SocketID)
+			}
+		}
+
 		if isPresence {
 			membersMap := client.AppHub.GetPresenceMembers(subData.Channel)
 
@@ -267,7 +285,7 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appSecr
 	}
 }
 
-func (s *Server) handleUnsubscribe(client *core.Client, event PusherEvent) {
+func (s *Server) handleUnsubscribe(client *core.Client, event PusherEvent, debug bool) {
 	var unsubData PusherUnsubscribeData
 
 	var dataStr string
@@ -280,10 +298,13 @@ func (s *Server) handleUnsubscribe(client *core.Client, event PusherEvent) {
 
 	if unsubData.Channel != "" {
 		client.AppHub.Unsubscribe(client, unsubData.Channel)
+		if debug {
+			log.Printf("[DEBUG] Client unsubscribed from channel %s: Socket ID %s", unsubData.Channel, client.SocketID)
+		}
 	}
 }
 
-func (s *Server) handleClientEvent(client *core.Client, event PusherEvent) {
+func (s *Server) handleClientEvent(client *core.Client, event PusherEvent, debug bool) {
 	if strings.HasPrefix(event.Event, "client-") {
 		// Find the channel from the event (the wrapper PusherEvent already extracts it for client events usually)
 		// But for double encoding sometimes it's just event.Channel
@@ -311,6 +332,9 @@ func (s *Server) handleClientEvent(client *core.Client, event PusherEvent) {
 				})
 
 				if isSubscribed {
+					if debug {
+						log.Printf("[DEBUG] Client event %s triggered on channel %s by Socket ID %s", event.Event, channelName, client.SocketID)
+					}
 					// Double encoding: standard Pusher channels protocol requires stringified JSON.
 					// Wait, client events format: {"event": "client-...", "channel": "presence-...", "data": ...}
 
@@ -330,7 +354,7 @@ func (s *Server) handleClientEvent(client *core.Client, event PusherEvent) {
 	}
 }
 
-func (s *Server) handleMessage(client *core.Client, message []byte, appSecret, appKey string) {
+func (s *Server) handleMessage(client *core.Client, message []byte, appSecret, appKey string, debug bool) {
 	var event PusherEvent
 	if err := json.Unmarshal(message, &event); err != nil {
 		log.Println("Invalid JSON received:", err)
@@ -339,13 +363,13 @@ func (s *Server) handleMessage(client *core.Client, message []byte, appSecret, a
 
 	switch event.Event {
 	case "pusher:ping":
-		s.handlePing(client)
+		s.handlePing(client, debug)
 	case "pusher:subscribe":
-		s.handleSubscribe(client, event, appSecret, appKey)
+		s.handleSubscribe(client, event, appSecret, appKey, debug)
 	case "pusher:unsubscribe":
-		s.handleUnsubscribe(client, event)
+		s.handleUnsubscribe(client, event, debug)
 	default:
-		s.handleClientEvent(client, event)
+		s.handleClientEvent(client, event, debug)
 	}
 }
 
