@@ -26,6 +26,22 @@ A lightweight, in-memory, multi-tenant Pusher alternative written in Go, specifi
    ```
 5. Update `config.yaml` with your app credentials. You can add as many apps as needed under the `apps` array.
 
+## Configuration
+
+The server relies on a `config.yaml` file for setup. Each app in your `apps` block requires an `app_id`, `app_key`, and `app_secret`.
+
+To enhance security, you should configure the `allowed_origins` list for each app. If `allowed_origins` is omitted or empty, the server defaults to allowing connections from any origin.
+
+```yaml
+port: "8080"
+debug: false
+apps:
+  - app_id: "my-app-id-1"
+    app_key: "my-app-key-1"
+    app_secret: "my-app-secret-1"
+    allowed_origins: ["http://localhost:3000", "https://myproductionapp.com"]
+```
+
 ## Running the Server
 
 ```bash
