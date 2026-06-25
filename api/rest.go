@@ -59,8 +59,15 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 		return
 	}
 
+	// Limit request body to 1MB to prevent memory exhaustion DoS
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		if _, ok := err.(*http.MaxBytesError); ok {
+			http.Error(w, "Payload too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}

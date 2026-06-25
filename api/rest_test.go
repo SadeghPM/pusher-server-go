@@ -264,6 +264,34 @@ func TestHandleEventsInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestHandleEventsPayloadTooLarge(t *testing.T) {
+	cfg := &config.Config{
+		Port: "8080",
+		Apps: []config.AppConfig{
+			{
+				AppID:     "123",
+				AppKey:    "test-key",
+				AppSecret: "test-secret",
+			},
+		},
+	}
+	globalHub := core.NewGlobalHub()
+	api := NewAPI(globalHub, cfg)
+
+	// Create a body larger than 1MB
+	largeBody := bytes.Repeat([]byte("a"), 1048576+1)
+
+	url := "/apps/123/events"
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(largeBody))
+	rr := httptest.NewRecorder()
+
+	api.HandleEvents(rr, req, "123")
+
+	if status := rr.Code; status != http.StatusRequestEntityTooLarge {
+		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusRequestEntityTooLarge)
+	}
+}
+
 func TestHandleEventsMethodNotAllowed(t *testing.T) {
 	cfg := &config.Config{
 		Port: "8080",

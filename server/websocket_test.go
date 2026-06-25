@@ -502,7 +502,9 @@ func TestClientEventBroadcastPresenceChannel(t *testing.T) {
 
 	// Setup Client 1 (john)
 	ws1, _, err := connectWebSocket(ts, appKey)
-	if err != nil { t.Fatalf("Failed to connect ws1: %v", err) }
+	if err != nil {
+		t.Fatalf("Failed to connect ws1: %v", err)
+	}
 	defer ws1.Close()
 
 	ws1.SetReadDeadline(time.Now().Add(2 * time.Second))
@@ -518,7 +520,9 @@ func TestClientEventBroadcastPresenceChannel(t *testing.T) {
 
 	// Setup Client 2 (jane)
 	ws2, _, err := connectWebSocket(ts, appKey)
-	if err != nil { t.Fatalf("Failed to connect ws2: %v", err) }
+	if err != nil {
+		t.Fatalf("Failed to connect ws2: %v", err)
+	}
 	defer ws2.Close()
 
 	ws2.SetReadDeadline(time.Now().Add(2 * time.Second))
@@ -540,7 +544,9 @@ func TestClientEventBroadcastPresenceChannel(t *testing.T) {
 	subEvent1 := fmt.Sprintf(`{"event":"pusher:subscribe","data":{"channel":"%s","auth":"%s","channel_data":"%s"}}`, channelName, auth1, strings.ReplaceAll(channelData1, `"`, `\"`))
 	ws1.WriteMessage(websocket.TextMessage, []byte(subEvent1))
 	_, _, err = ws1.ReadMessage() // subscription_succeeded
-	if err != nil { t.Fatalf("Failed to read subscription_succeeded ws1: %v", err) }
+	if err != nil {
+		t.Fatalf("Failed to read subscription_succeeded ws1: %v", err)
+	}
 
 	// Subscribe ws2
 	channelData2 := `{"user_id":"jane_id","user_info":{"name":"Jane"}}`
@@ -550,11 +556,15 @@ func TestClientEventBroadcastPresenceChannel(t *testing.T) {
 
 	// ws2 receives subscription_succeeded
 	_, _, err = ws2.ReadMessage()
-	if err != nil { t.Fatalf("Failed to read subscription_succeeded ws2: %v", err) }
+	if err != nil {
+		t.Fatalf("Failed to read subscription_succeeded ws2: %v", err)
+	}
 
 	// ws1 should receive member_added
 	_, _, err = ws1.ReadMessage()
-	if err != nil { t.Fatalf("Failed to read member_added ws1: %v", err) }
+	if err != nil {
+		t.Fatalf("Failed to read member_added ws1: %v", err)
+	}
 
 	// Client 1 (john) sends a client event (double encoded)
 	clientEvent := fmt.Sprintf(`{"event":"client-ping","channel":"%s","data":"{\"text\":\"ping\"}"}`, channelName)
