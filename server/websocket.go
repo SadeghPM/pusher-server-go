@@ -223,91 +223,104 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appSecr
 		json.Unmarshal(event.Data, &subData)
 	}
 
-	if subData.Channel != "" {
-		isPrivate := strings.HasPrefix(subData.Channel, "private-")
-		isPresence := strings.HasPrefix(subData.Channel, "presence-")
+	if subData.Channel == "" {
+		return
+	}
 
-		var member *core.ChannelMember
-		var presenceData ChannelData
+	isPrivate := strings.HasPrefix(subData.Channel, "private-")
+	isPresence := strings.HasPrefix(subData.Channel, "presence-")
 
-		if isPrivate || isPresence {
-			// Verify signature
-			// Format: socket_id:channel_name
-			toSign := fmt.Sprintf("%s:%s", client.SocketID, subData.Channel)
-			if isPresence {
-				toSign = fmt.Sprintf("%s:%s:%s", client.SocketID, subData.Channel, subData.ChannelData)
-			}
-			expectedSig := generateSignature(appSecret, toSign)
+	var member *core.ChannelMember
 
-			// Auth string format is app_key:signature
-			authParts := strings.Split(subData.Auth, ":")
-			if len(authParts) != 2 || authParts[0] != appKey || authParts[1] != expectedSig {
-				log.Printf("Invalid signature for channel %s. Expected %s, got %s", subData.Channel, expectedSig, subData.Auth)
-
-				errorPayload := fmt.Sprintf(`{"event":"pusher:error","data":"{\"message\":\"Invalid signature: Expected HMAC SHA256 hex digest of %s:%s, but got %s\",\"code\":null}"}`, client.SocketID, subData.Channel, subData.Auth)
-				client.Send <- []byte(errorPayload)
-				return
-			}
-
-			if isPresence {
-				if err := json.Unmarshal([]byte(subData.ChannelData), &presenceData); err == nil {
-					member = &core.ChannelMember{
-						UserID:   presenceData.UserID,
-						UserInfo: presenceData.UserInfo,
-					}
-				}
-			}
-		}
-
-		isNewUser := client.AppHub.Subscribe(client, subData.Channel, member)
-
-		if debug {
-			if isPresence && member != nil {
-				log.Printf("[DEBUG] User subscribed to presence channel %s: Socket ID %s, User ID %s", subData.Channel, client.SocketID, member.UserID)
-			} else {
-				log.Printf("[DEBUG] Client subscribed to channel %s: Socket ID %s", subData.Channel, client.SocketID)
-			}
+	if isPrivate || isPresence {
+		if !s.verifySubscriptionSignature(client, subData, appSecret, appKey, isPresence) {
+			return
 		}
 
 		if isPresence {
-			membersMap := client.AppHub.GetPresenceMembers(subData.Channel)
-
-			ids := make([]string, 0, len(membersMap))
-			for id := range membersMap {
-				ids = append(ids, id)
-			}
-
-			presenceHash := map[string]interface{}{
-				"presence": map[string]interface{}{
-					"ids":   ids,
-					"hash":  membersMap,
-					"count": len(membersMap),
-				},
-			}
-
-			presenceHashBytes, _ := json.Marshal(presenceHash)
-			safeDataStringBytes, _ := json.Marshal(string(presenceHashBytes))
-
-			successPayload := fmt.Sprintf(`{"event":"pusher_internal:subscription_succeeded","channel":"%s","data":%s}`, subData.Channel, safeDataStringBytes)
-			client.Send <- []byte(successPayload)
-
-			if isNewUser && member != nil {
-				userInfoStr := "{}"
-				if member.UserInfo != nil {
-					userInfoStr = string(member.UserInfo)
+			var presenceData ChannelData
+			if err := json.Unmarshal([]byte(subData.ChannelData), &presenceData); err == nil {
+				member = &core.ChannelMember{
+					UserID:   presenceData.UserID,
+					UserInfo: presenceData.UserInfo,
 				}
-
-				memberData := fmt.Sprintf(`{"user_id":"%s","user_info":%s}`, member.UserID, userInfoStr)
-				safeMemberDataBytes, _ := json.Marshal(memberData)
-
-				memberAddedPayload := fmt.Sprintf(`{"event":"pusher_internal:member_added","channel":"%s","data":%s}`, subData.Channel, safeMemberDataBytes)
-				client.AppHub.BroadcastToChannel(subData.Channel, []byte(memberAddedPayload), client.SocketID)
 			}
-		} else {
-			// Confirm subscription for public/private
-			successPayload := fmt.Sprintf(`{"event":"pusher_internal:subscription_succeeded","channel":"%s","data":"{}"}`, subData.Channel)
-			client.Send <- []byte(successPayload)
 		}
+	}
+
+	isNewUser := client.AppHub.Subscribe(client, subData.Channel, member)
+
+	if debug {
+		if isPresence && member != nil {
+			log.Printf("[DEBUG] User subscribed to presence channel %s: Socket ID %s, User ID %s", subData.Channel, client.SocketID, member.UserID)
+		} else {
+			log.Printf("[DEBUG] Client subscribed to channel %s: Socket ID %s", subData.Channel, client.SocketID)
+		}
+	}
+
+	if isPresence {
+		s.handlePresenceSubscriptionSuccess(client, subData.Channel, member, isNewUser)
+	} else {
+		// Confirm subscription for public/private
+		successPayload := fmt.Sprintf(`{"event":"pusher_internal:subscription_succeeded","channel":"%s","data":"{}"}`, subData.Channel)
+		client.Send <- []byte(successPayload)
+	}
+}
+
+func (s *Server) verifySubscriptionSignature(client *core.Client, subData PusherSubscribeData, appSecret, appKey string, isPresence bool) bool {
+	// Verify signature
+	// Format: socket_id:channel_name
+	toSign := fmt.Sprintf("%s:%s", client.SocketID, subData.Channel)
+	if isPresence {
+		toSign = fmt.Sprintf("%s:%s:%s", client.SocketID, subData.Channel, subData.ChannelData)
+	}
+	expectedSig := generateSignature(appSecret, toSign)
+
+	// Auth string format is app_key:signature
+	authParts := strings.Split(subData.Auth, ":")
+	if len(authParts) != 2 || authParts[0] != appKey || authParts[1] != expectedSig {
+		log.Printf("Invalid signature for channel %s. Expected %s, got %s", subData.Channel, expectedSig, subData.Auth)
+
+		errorPayload := fmt.Sprintf(`{"event":"pusher:error","data":"{\"message\":\"Invalid signature: Expected HMAC SHA256 hex digest of %s:%s, but got %s\",\"code\":null}"}`, client.SocketID, subData.Channel, subData.Auth)
+		client.Send <- []byte(errorPayload)
+		return false
+	}
+	return true
+}
+
+func (s *Server) handlePresenceSubscriptionSuccess(client *core.Client, channel string, member *core.ChannelMember, isNewUser bool) {
+	membersMap := client.AppHub.GetPresenceMembers(channel)
+
+	ids := make([]string, 0, len(membersMap))
+	for id := range membersMap {
+		ids = append(ids, id)
+	}
+
+	presenceHash := map[string]interface{}{
+		"presence": map[string]interface{}{
+			"ids":   ids,
+			"hash":  membersMap,
+			"count": len(membersMap),
+		},
+	}
+
+	presenceHashBytes, _ := json.Marshal(presenceHash)
+	safeDataStringBytes, _ := json.Marshal(string(presenceHashBytes))
+
+	successPayload := fmt.Sprintf(`{"event":"pusher_internal:subscription_succeeded","channel":"%s","data":%s}`, channel, safeDataStringBytes)
+	client.Send <- []byte(successPayload)
+
+	if isNewUser && member != nil {
+		userInfoStr := "{}"
+		if member.UserInfo != nil {
+			userInfoStr = string(member.UserInfo)
+		}
+
+		memberData := fmt.Sprintf(`{"user_id":"%s","user_info":%s}`, member.UserID, userInfoStr)
+		safeMemberDataBytes, _ := json.Marshal(memberData)
+
+		memberAddedPayload := fmt.Sprintf(`{"event":"pusher_internal:member_added","channel":"%s","data":%s}`, channel, safeMemberDataBytes)
+		client.AppHub.BroadcastToChannel(channel, []byte(memberAddedPayload), client.SocketID)
 	}
 }
 
