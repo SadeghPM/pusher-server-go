@@ -14,8 +14,9 @@ type AppConfig struct {
 }
 
 type Config struct {
-	Port string      `yaml:"port"`
-	Apps []AppConfig `yaml:"apps"`
+	Port  string      `yaml:"port"`
+	Debug bool        `yaml:"debug"`
+	Apps  []AppConfig `yaml:"apps"`
 }
 
 func LoadConfig(filename string) *Config {

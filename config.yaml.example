@@ -1,4 +1,5 @@
 port: "8080"
+debug: false
 apps:
   - app_id: "my-app-id-1"
     app_key: "my-app-key-1"
