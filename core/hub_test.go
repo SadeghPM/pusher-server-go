@@ -122,3 +122,70 @@ func TestAppHubGetPresenceMembers(t *testing.T) {
 		t.Errorf("Expected user2 info to be `{\"name\":\"Bob\"}`, got %s", string(members["user2"]))
 	}
 }
+
+func TestAppHubBroadcastToChannel(t *testing.T) {
+	hub := NewAppHub("test-app")
+	channelName := "test-channel"
+
+	// Create clients with buffered channels so sends don't block
+	client1 := &Client{SocketID: "123.1", Send: make(chan []byte, 1)}
+	client2 := &Client{SocketID: "123.2", Send: make(chan []byte, 1)}
+	client3 := &Client{SocketID: "123.3", Send: make(chan []byte, 1)}
+
+	// Create a client with a full buffer to test non-blocking behavior
+	clientFull := &Client{SocketID: "123.full", Send: make(chan []byte, 1)}
+	clientFull.Send <- []byte("initial")
+
+	hub.RegisterClient(client1)
+	hub.RegisterClient(client2)
+	hub.RegisterClient(client3)
+	hub.RegisterClient(clientFull)
+
+	hub.Subscribe(client1, channelName, nil)
+	hub.Subscribe(client2, channelName, nil)
+	hub.Subscribe(client3, channelName, nil)
+	hub.Subscribe(clientFull, channelName, nil)
+
+	payload := []byte(`{"event":"my_event","data":"hello"}`)
+
+	// Broadcast to the channel, excluding client2
+	hub.BroadcastToChannel(channelName, payload, client2.SocketID)
+
+	// Check client1 (should receive)
+	select {
+	case msg := <-client1.Send:
+		if string(msg) != string(payload) {
+			t.Errorf("Client 1 expected %s, got %s", string(payload), string(msg))
+		}
+	default:
+		t.Errorf("Client 1 did not receive message")
+	}
+
+	// Check client2 (should be excluded)
+	select {
+	case <-client2.Send:
+		t.Errorf("Client 2 received message but should have been excluded")
+	default:
+		// Expected
+	}
+
+	// Check client3 (should receive)
+	select {
+	case msg := <-client3.Send:
+		if string(msg) != string(payload) {
+			t.Errorf("Client 3 expected %s, got %s", string(payload), string(msg))
+		}
+	default:
+		t.Errorf("Client 3 did not receive message")
+	}
+
+	// Check clientFull (should not receive, but should not block broadcast)
+	select {
+	case msg := <-clientFull.Send:
+		if string(msg) != "initial" {
+			t.Errorf("Client full expected initial message, got %s", string(msg))
+		}
+	default:
+		t.Errorf("Client full channel should have had initial message")
+	}
+}
