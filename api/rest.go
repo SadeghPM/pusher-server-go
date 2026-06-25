@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -74,40 +75,8 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 	defer r.Body.Close()
 
 	// 1. Authenticate request using HMAC SHA256
-	// Method\nPath\nQuery params (alphabetical)
-	authKey := r.URL.Query().Get("auth_key")
-	authTimestamp := r.URL.Query().Get("auth_timestamp")
-	authVersion := r.URL.Query().Get("auth_version")
-	bodyMD5 := r.URL.Query().Get("body_md5")
-	authSignature := r.URL.Query().Get("auth_signature")
-
-	if authKey != appCfg.AppKey {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Verify body MD5
-	hasher := md5.New()
-	hasher.Write(body)
-	expectedMD5 := hex.EncodeToString(hasher.Sum(nil))
-
-	if bodyMD5 != expectedMD5 {
-		http.Error(w, "Invalid body MD5", http.StatusUnauthorized)
-		return
-	}
-
-	// Reconstruct signature string
-	// Params must be ordered alphabetically: auth_key, auth_timestamp, auth_version, body_md5
-	queryParams := fmt.Sprintf("auth_key=%s&auth_timestamp=%s&auth_version=%s&body_md5=%s", authKey, authTimestamp, authVersion, bodyMD5)
-
-	stringToSign := fmt.Sprintf("%s\n%s\n%s", r.Method, r.URL.Path, queryParams)
-
-	mac := hmac.New(sha256.New, []byte(appCfg.AppSecret))
-	mac.Write([]byte(stringToSign))
-	expectedSignature := hex.EncodeToString(mac.Sum(nil))
-
-	if authSignature != expectedSignature {
-		http.Error(w, "Invalid signature", http.StatusUnauthorized)
+	if err := authenticateRequest(r, body, appCfg); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -146,4 +115,43 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{}`))
+}
+
+// authenticateRequest verifies the Pusher REST API request signature.
+func authenticateRequest(r *http.Request, body []byte, appCfg *config.AppConfig) error {
+	// Method\nPath\nQuery params (alphabetical)
+	authKey := r.URL.Query().Get("auth_key")
+	authTimestamp := r.URL.Query().Get("auth_timestamp")
+	authVersion := r.URL.Query().Get("auth_version")
+	bodyMD5 := r.URL.Query().Get("body_md5")
+	authSignature := r.URL.Query().Get("auth_signature")
+
+	if authKey != appCfg.AppKey {
+		return errors.New("Unauthorized")
+	}
+
+	// Verify body MD5
+	hasher := md5.New()
+	hasher.Write(body)
+	expectedMD5 := hex.EncodeToString(hasher.Sum(nil))
+
+	if bodyMD5 != expectedMD5 {
+		return errors.New("Invalid body MD5")
+	}
+
+	// Reconstruct signature string
+	// Params must be ordered alphabetically: auth_key, auth_timestamp, auth_version, body_md5
+	queryParams := fmt.Sprintf("auth_key=%s&auth_timestamp=%s&auth_version=%s&body_md5=%s", authKey, authTimestamp, authVersion, bodyMD5)
+
+	stringToSign := fmt.Sprintf("%s\n%s\n%s", r.Method, r.URL.Path, queryParams)
+
+	mac := hmac.New(sha256.New, []byte(appCfg.AppSecret))
+	mac.Write([]byte(stringToSign))
+	expectedSignature := hex.EncodeToString(mac.Sum(nil))
+
+	if authSignature != expectedSignature {
+		return errors.New("Invalid signature")
+	}
+
+	return nil
 }
