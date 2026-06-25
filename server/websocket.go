@@ -18,6 +18,20 @@ import (
 	"pusher-clone/core"
 )
 
+const (
+	// Time allowed to write a message to the peer.
+	writeWait = 10 * time.Second
+
+	// Time allowed to read the next pong message from the peer.
+	pongWait = 120 * time.Second
+
+	// Send pings to peer with this period. Must be less than pongWait.
+	pingPeriod = 60 * time.Second
+
+	// Maximum message size allowed from peer.
+	maxMessageSize = 8192
+)
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
@@ -101,7 +115,7 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey 
 	}
 
 	// Send connection established event
-	establishedPayload := fmt.Sprintf(`{"event":"pusher:connection_established","data":"{\"socket_id\":\"%s\",\"activity_timeout\":120}"}`, socketID)
+	establishedPayload := fmt.Sprintf(`{"event":"pusher:connection_established","data":"{\"socket_id\":\"%s\",\"activity_timeout\":%d}"}`, socketID, int(pongWait.Seconds()))
 	client.Send <- []byte(establishedPayload)
 
 	go s.writePump(client)
@@ -124,9 +138,9 @@ func (s *Server) readPump(client *core.Client, appSecret, appKey string, debug b
 		}
 	}()
 
-	client.Conn.SetReadLimit(8192)
-	client.Conn.SetReadDeadline(time.Now().Add(120 * time.Second))
-	client.Conn.SetPongHandler(func(string) error { client.Conn.SetReadDeadline(time.Now().Add(120 * time.Second)); return nil })
+	client.Conn.SetReadLimit(maxMessageSize)
+	client.Conn.SetReadDeadline(time.Now().Add(pongWait))
+	client.Conn.SetPongHandler(func(string) error { client.Conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
 
 	for {
 		_, message, err := client.Conn.ReadMessage()
@@ -142,7 +156,7 @@ func (s *Server) readPump(client *core.Client, appSecret, appKey string, debug b
 }
 
 func (s *Server) writePump(client *core.Client) {
-	ticker := time.NewTicker(60 * time.Second) // Ping interval
+	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
 		client.Conn.Close()
@@ -151,7 +165,7 @@ func (s *Server) writePump(client *core.Client) {
 	for {
 		select {
 		case message, ok := <-client.Send:
-			client.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			client.Conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				client.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
@@ -169,7 +183,7 @@ func (s *Server) writePump(client *core.Client) {
 				}
 			}
 		case <-ticker.C:
-			client.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			client.Conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := client.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
