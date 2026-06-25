@@ -47,11 +47,19 @@ func setupTestServer() (*httptest.Server, *Server, string, string, string) {
 }
 
 func connectWebSocket(ts *httptest.Server, appKey string) (*websocket.Conn, *http.Response, error) {
+	return connectWebSocketWithOrigin(ts, appKey, "")
+}
+
+func connectWebSocketWithOrigin(ts *httptest.Server, appKey string, origin string) (*websocket.Conn, *http.Response, error) {
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/app/" + appKey
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 5 * time.Second,
 	}
-	return dialer.Dial(wsURL, nil)
+	headers := http.Header{}
+	if origin != "" {
+		headers.Add("Origin", origin)
+	}
+	return dialer.Dial(wsURL, headers)
 }
 
 func TestConnectionEstablished(t *testing.T) {
@@ -627,4 +635,93 @@ func generateTestPresenceAuth(appKey, appSecret, socketID, channel, channelData 
 	mac.Write([]byte(toSign))
 	signature := hex.EncodeToString(mac.Sum(nil))
 	return fmt.Sprintf("%s:%s", appKey, signature)
+}
+
+func TestWebSocketOriginValidation(t *testing.T) {
+	appID1 := "test-app-1"
+	appKey1 := "test-key-1"
+	appSecret1 := "test-secret-1"
+
+	appID2 := "test-app-2"
+	appKey2 := "test-key-2"
+	appSecret2 := "test-secret-2"
+
+	cfg := &config.Config{
+		Port: "8080",
+		Apps: []config.AppConfig{
+			{
+				AppID:          appID1,
+				AppKey:         appKey1,
+				AppSecret:      appSecret1,
+				AllowedOrigins: []string{"http://localhost:3000", "https://example.com"},
+			},
+			{
+				AppID:          appID2,
+				AppKey:         appKey2,
+				AppSecret:      appSecret2,
+				AllowedOrigins: []string{"*"},
+			},
+			{
+				AppID:          "test-app-3",
+				AppKey:         "test-key-3",
+				AppSecret:      "test-secret-3",
+				// AllowedOrigins omitted
+			},
+		},
+	}
+	globalHub := core.NewGlobalHub()
+	server := NewServer(globalHub, cfg)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/app/", func(w http.ResponseWriter, r *http.Request) {
+		pathAppKey := strings.TrimPrefix(r.URL.Path, "/app/")
+		server.HandleWebSocket(w, r, pathAppKey)
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	// Test app1 with valid origin
+	ws, resp, err := connectWebSocketWithOrigin(ts, appKey1, "http://localhost:3000")
+	if err != nil {
+		t.Fatalf("Expected connection to succeed with valid origin, got error: %v", err)
+	}
+	ws.Close()
+
+	// Test app1 with another valid origin
+	ws, resp, err = connectWebSocketWithOrigin(ts, appKey1, "https://example.com")
+	if err != nil {
+		t.Fatalf("Expected connection to succeed with valid origin, got error: %v", err)
+	}
+	ws.Close()
+
+	// Test app1 with invalid origin
+	_, resp, err = connectWebSocketWithOrigin(ts, appKey1, "http://malicious.com")
+	if err == nil {
+		t.Fatalf("Expected connection to fail with invalid origin")
+	}
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("Expected status %d for invalid origin, got %d", http.StatusForbidden, resp.StatusCode)
+	}
+
+	// Test app2 with any origin
+	ws, resp, err = connectWebSocketWithOrigin(ts, appKey2, "http://malicious.com")
+	if err != nil {
+		t.Fatalf("Expected connection to succeed with * origin, got error: %v", err)
+	}
+	ws.Close()
+
+	// Test app3 with no allowed origins config (should allow all)
+	ws, resp, err = connectWebSocketWithOrigin(ts, "test-key-3", "http://malicious.com")
+	if err != nil {
+		t.Fatalf("Expected connection to succeed with no origins configured, got error: %v", err)
+	}
+	ws.Close()
+
+	// Test no origin header (should allow)
+	ws, resp, err = connectWebSocket(ts, appKey1)
+	if err != nil {
+		t.Fatalf("Expected connection to succeed with no origin header, got error: %v", err)
+	}
+	ws.Close()
 }
