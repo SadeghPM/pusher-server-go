@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"pusher-clone/config"
@@ -110,7 +110,11 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 
 	// Respond with success
 	if a.Config != nil && a.Config.Debug {
-		log.Printf("[DEBUG] Broadcasted event %s to channels %v via REST API (App ID: %s)", payload.Name, channels, appID)
+		slog.Debug("Broadcasted event via REST API",
+			"app_id", appID,
+			"event", payload.Name,
+			"channels", channels,
+		)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -112,7 +112,7 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey 
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println(err)
+		slog.Error("WebSocket upgrade failed", "error", err)
 		return
 	}
 
@@ -123,7 +123,10 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey 
 	appHub.RegisterClient(client)
 
 	if s.Config.Debug {
-		log.Printf("[DEBUG] Client connected: Socket ID %s (App ID: %s)", socketID, appCfg.AppID)
+		slog.Debug("Client connected",
+			"app_id", appCfg.AppID,
+			"socket_id", socketID,
+		)
 	}
 
 	// Send connection established event
@@ -146,7 +149,10 @@ func (s *Server) readPump(client *core.Client, appSecret, appKey string, debug b
 		client.AppHub.UnregisterClient(client)
 		client.Conn.Close()
 		if debug {
-			log.Printf("[DEBUG] Client disconnected: Socket ID %s", client.SocketID)
+			slog.Debug("Client disconnected",
+				"app_id", client.AppHub.AppID,
+				"socket_id", client.SocketID,
+			)
 		}
 	}()
 
@@ -158,7 +164,11 @@ func (s *Server) readPump(client *core.Client, appSecret, appKey string, debug b
 		_, message, err := client.Conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("error: %v", err)
+				slog.Error("WebSocket read error",
+					"error", err,
+					"app_id", client.AppHub.AppID,
+					"socket_id", client.SocketID,
+				)
 			}
 			break
 		}
@@ -205,7 +215,11 @@ func (s *Server) writePump(client *core.Client) {
 
 func (s *Server) handlePing(client *core.Client, debug bool) {
 	if debug {
-		log.Printf("[DEBUG] Ping received from Socket ID %s", client.SocketID)
+		slog.Debug("Ping received",
+			"app_id", client.AppHub.AppID,
+			"socket_id", client.SocketID,
+			"event", "pusher:ping",
+		)
 	}
 	client.Send <- []byte(`{"event":"pusher:pong","data":"{}"}`)
 }
@@ -252,9 +266,20 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appSecr
 
 	if debug {
 		if isPresence && member != nil {
-			log.Printf("[DEBUG] User subscribed to presence channel %s: Socket ID %s, User ID %s", subData.Channel, client.SocketID, member.UserID)
+			slog.Debug("User subscribed to presence channel",
+				"app_id", client.AppHub.AppID,
+				"channel", subData.Channel,
+				"socket_id", client.SocketID,
+				"event", "pusher:subscribe",
+				"user_id", member.UserID,
+			)
 		} else {
-			log.Printf("[DEBUG] Client subscribed to channel %s: Socket ID %s", subData.Channel, client.SocketID)
+			slog.Debug("Client subscribed to channel",
+				"app_id", client.AppHub.AppID,
+				"channel", subData.Channel,
+				"socket_id", client.SocketID,
+				"event", "pusher:subscribe",
+			)
 		}
 	}
 
@@ -279,7 +304,13 @@ func (s *Server) verifySubscriptionSignature(client *core.Client, subData Pusher
 	// Auth string format is app_key:signature
 	authParts := strings.Split(subData.Auth, ":")
 	if len(authParts) != 2 || authParts[0] != appKey || authParts[1] != expectedSig {
-		log.Printf("Invalid signature for channel %s. Expected %s, got %s", subData.Channel, expectedSig, subData.Auth)
+		slog.Error("Invalid signature",
+			"app_id", client.AppHub.AppID,
+			"channel", subData.Channel,
+			"socket_id", client.SocketID,
+			"expected", expectedSig,
+			"got", subData.Auth,
+		)
 
 		errorPayload := fmt.Sprintf(`{"event":"pusher:error","data":"{\"message\":\"Invalid signature: Expected HMAC SHA256 hex digest of %s:%s, but got %s\",\"code\":null}"}`, client.SocketID, subData.Channel, subData.Auth)
 		client.Send <- []byte(errorPayload)
@@ -338,7 +369,12 @@ func (s *Server) handleUnsubscribe(client *core.Client, event PusherEvent, debug
 	if unsubData.Channel != "" {
 		client.AppHub.Unsubscribe(client, unsubData.Channel)
 		if debug {
-			log.Printf("[DEBUG] Client unsubscribed from channel %s: Socket ID %s", unsubData.Channel, client.SocketID)
+			slog.Debug("Client unsubscribed from channel",
+				"app_id", client.AppHub.AppID,
+				"channel", unsubData.Channel,
+				"socket_id", client.SocketID,
+				"event", "pusher:unsubscribe",
+			)
 		}
 	}
 }
@@ -372,7 +408,12 @@ func (s *Server) handleClientEvent(client *core.Client, event PusherEvent, debug
 
 				if isSubscribed {
 					if debug {
-						log.Printf("[DEBUG] Client event %s triggered on channel %s by Socket ID %s", event.Event, channelName, client.SocketID)
+						slog.Debug("Client event triggered",
+							"app_id", client.AppHub.AppID,
+							"channel", channelName,
+							"socket_id", client.SocketID,
+							"event", event.Event,
+						)
 					}
 					// Double encoding: standard Pusher channels protocol requires stringified JSON.
 					// Wait, client events format: {"event": "client-...", "channel": "presence-...", "data": ...}
@@ -396,7 +437,11 @@ func (s *Server) handleClientEvent(client *core.Client, event PusherEvent, debug
 func (s *Server) handleMessage(client *core.Client, message []byte, appSecret, appKey string, debug bool) {
 	var event PusherEvent
 	if err := json.Unmarshal(message, &event); err != nil {
-		log.Println("Invalid JSON received:", err)
+		slog.Error("Invalid JSON received",
+			"error", err,
+			"app_id", client.AppHub.AppID,
+			"socket_id", client.SocketID,
+		)
 		return
 	}
 

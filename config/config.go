@@ -1,7 +1,7 @@
 package config
 
 import (
-	"log"
+	"log/slog"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -23,13 +23,15 @@ type Config struct {
 func LoadConfig(filename string) *Config {
 	data, err := os.ReadFile(filename)
 	if err != nil {
-		log.Fatalf("Failed to read config file %s: %v", filename, err)
+		slog.Error("Failed to read config file", "filename", filename, "error", err)
+		os.Exit(1)
 	}
 
 	var cfg Config
 	err = yaml.Unmarshal(data, &cfg)
 	if err != nil {
-		log.Fatalf("Failed to parse config file %s: %v", filename, err)
+		slog.Error("Failed to parse config file", "filename", filename, "error", err)
+		os.Exit(1)
 	}
 
 	if cfg.Port == "" {

@@ -2,8 +2,9 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 
 	"pusher-clone/api"
@@ -14,6 +15,15 @@ import (
 
 func main() {
 	cfg := config.LoadConfig("config.yaml")
+
+	// Set up slog
+	logLevel := slog.LevelInfo
+	if cfg.Debug {
+		logLevel = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
+	slog.SetDefault(logger)
+
 	globalHub := core.NewGlobalHub()
 
 	wsServer := server.NewServer(globalHub, cfg)
@@ -49,9 +59,10 @@ func main() {
 	})
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
-	log.Printf("Starting Multi-Tenant Pusher clone server on %s", addr)
+	slog.Info("Starting Multi-Tenant Pusher clone server", "addr", addr)
 
 	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatal("ListenAndServe:", err)
+		slog.Error("ListenAndServe failed", "error", err)
+		os.Exit(1)
 	}
 }
