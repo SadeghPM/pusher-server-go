@@ -18,23 +18,14 @@ import (
 )
 
 type API struct {
-	GlobalHub *core.GlobalHub
-	Config    *config.Config
-	appsByID  map[string]*config.AppConfig
+	GlobalHub     *core.GlobalHub
+	ConfigManager *config.Manager
 }
 
-func NewAPI(globalHub *core.GlobalHub, cfg *config.Config) *API {
-	appsByID := make(map[string]*config.AppConfig)
-	if cfg != nil {
-		for i := range cfg.Apps {
-			appsByID[cfg.Apps[i].AppID] = &cfg.Apps[i]
-		}
-	}
-
+func NewAPI(globalHub *core.GlobalHub, manager *config.Manager) *API {
 	return &API{
-		GlobalHub: globalHub,
-		Config:    cfg,
-		appsByID:  appsByID,
+		GlobalHub:     globalHub,
+		ConfigManager: manager,
 	}
 }
 
@@ -54,7 +45,7 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 	}
 
 	// Find App Config
-	appCfg := a.appsByID[appID]
+	appCfg := a.ConfigManager.GetAppByID(appID)
 
 	if appCfg == nil {
 		http.Error(w, "App not found", http.StatusNotFound)
@@ -112,7 +103,8 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 	metrics.RestAPIEventsTotal.WithLabelValues(appID).Inc()
 
 	// Respond with success
-	if a.Config != nil && a.Config.Debug {
+	cfg := a.ConfigManager.GetConfig()
+	if cfg != nil && cfg.Debug {
 		slog.Debug("Broadcasted event via REST API",
 			"app_id", appID,
 			"event", payload.Name,
