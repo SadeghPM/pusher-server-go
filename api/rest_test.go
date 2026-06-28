@@ -27,7 +27,7 @@ func TestHandleEventsBadAppID(t *testing.T) {
 			},
 		},
 	}
-	globalHub := core.NewGlobalHub()
+	globalHub := core.NewGlobalHub(nil)
 	api := NewAPI(globalHub, cfg)
 
 	body := []byte(`{"name":"my-event","channel":"my-channel","data":"{\"message\":\"hello\"}"}`)
@@ -53,7 +53,7 @@ func TestHandleEventsAuth(t *testing.T) {
 			},
 		},
 	}
-	globalHub := core.NewGlobalHub()
+	globalHub := core.NewGlobalHub(nil)
 	api := NewAPI(globalHub, cfg)
 
 	body := []byte(`{"name":"my-event","channel":"my-channel","data":"{\"message\":\"hello\"}"}`)
@@ -99,7 +99,7 @@ func TestHandleEventsAuthFailure_BadKey(t *testing.T) {
 			},
 		},
 	}
-	globalHub := core.NewGlobalHub()
+	globalHub := core.NewGlobalHub(nil)
 	api := NewAPI(globalHub, cfg)
 
 	body := []byte(`{"name":"my-event","channel":"my-channel","data":"{\"message\":\"hello\"}"}`)
@@ -145,7 +145,7 @@ func TestHandleEventsAuthFailure_BadMD5(t *testing.T) {
 			},
 		},
 	}
-	globalHub := core.NewGlobalHub()
+	globalHub := core.NewGlobalHub(nil)
 	api := NewAPI(globalHub, cfg)
 
 	body := []byte(`{"name":"my-event","channel":"my-channel","data":"{\"message\":\"hello\"}"}`)
@@ -189,7 +189,7 @@ func TestHandleEventsAuthFailure_BadSignature(t *testing.T) {
 			},
 		},
 	}
-	globalHub := core.NewGlobalHub()
+	globalHub := core.NewGlobalHub(nil)
 	api := NewAPI(globalHub, cfg)
 
 	body := []byte(`{"name":"my-event","channel":"my-channel","data":"{\"message\":\"hello\"}"}`)
@@ -229,7 +229,7 @@ func TestHandleEventsInvalidJSON(t *testing.T) {
 			},
 		},
 	}
-	globalHub := core.NewGlobalHub()
+	globalHub := core.NewGlobalHub(nil)
 	api := NewAPI(globalHub, cfg)
 
 	body := []byte(`{invalid json`)
@@ -275,7 +275,7 @@ func TestHandleEventsPayloadTooLarge(t *testing.T) {
 			},
 		},
 	}
-	globalHub := core.NewGlobalHub()
+	globalHub := core.NewGlobalHub(nil)
 	api := NewAPI(globalHub, cfg)
 
 	// Create a body larger than 1MB
@@ -303,7 +303,7 @@ func TestHandleEventsMethodNotAllowed(t *testing.T) {
 			},
 		},
 	}
-	globalHub := core.NewGlobalHub()
+	globalHub := core.NewGlobalHub(nil)
 	api := NewAPI(globalHub, cfg)
 
 	url := "/apps/123/events"
@@ -328,7 +328,7 @@ func TestHandleEventsAppNotFound(t *testing.T) {
 			},
 		},
 	}
-	globalHub := core.NewGlobalHub()
+	globalHub := core.NewGlobalHub(nil)
 	api := NewAPI(globalHub, cfg)
 
 	url := "/apps/999/events"
@@ -359,7 +359,7 @@ func TestHandleEventsBadBody(t *testing.T) {
 			},
 		},
 	}
-	globalHub := core.NewGlobalHub()
+	globalHub := core.NewGlobalHub(nil)
 	api := NewAPI(globalHub, cfg)
 
 	url := "/apps/123/events"

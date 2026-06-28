@@ -12,6 +12,7 @@ type AppConfig struct {
 	AppKey         string   `yaml:"app_key"`
 	AppSecret      string   `yaml:"app_secret"`
 	AllowedOrigins []string `yaml:"allowed_origins"`
+	Webhooks       []string `yaml:"webhooks"`
 }
 
 type Config struct {
