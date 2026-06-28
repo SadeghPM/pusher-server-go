@@ -24,7 +24,7 @@ func setupTestServer() (*httptest.Server, *Server, string, string, string) {
 	appSecret := "test-secret"
 
 	cfg := &config.Config{
-		Port: "8080",
+		Port: "6001",
 		Apps: []config.AppConfig{
 			{
 				AppID:     appID,
@@ -647,7 +647,7 @@ func TestWebSocketOriginValidation(t *testing.T) {
 	appSecret2 := "test-secret-2"
 
 	cfg := &config.Config{
-		Port: "8080",
+		Port: "6001",
 		Apps: []config.AppConfig{
 			{
 				AppID:          appID1,
