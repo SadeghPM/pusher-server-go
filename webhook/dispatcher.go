@@ -20,20 +20,13 @@ type WebhookPayload struct {
 }
 
 type Dispatcher struct {
-	appsByID map[string]*config.AppConfig
-	client   *http.Client
+	ConfigManager *config.Manager
+	client        *http.Client
 }
 
-func NewDispatcher(cfg *config.Config) *Dispatcher {
-	appsByID := make(map[string]*config.AppConfig)
-	if cfg != nil {
-		for i := range cfg.Apps {
-			appsByID[cfg.Apps[i].AppID] = &cfg.Apps[i]
-		}
-	}
-
+func NewDispatcher(manager *config.Manager) *Dispatcher {
 	return &Dispatcher{
-		appsByID: appsByID,
+		ConfigManager: manager,
 		client: &http.Client{
 			Timeout: 5 * time.Second,
 		},
@@ -41,8 +34,8 @@ func NewDispatcher(cfg *config.Config) *Dispatcher {
 }
 
 func (d *Dispatcher) Dispatch(appID string, events []core.WebhookEvent) {
-	appCfg, ok := d.appsByID[appID]
-	if !ok || len(appCfg.Webhooks) == 0 {
+	appCfg := d.ConfigManager.GetAppByID(appID)
+	if appCfg == nil || len(appCfg.Webhooks) == 0 {
 		return
 	}
 

@@ -5,7 +5,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"pusher-clone/api"
 	"pusher-clone/config"
@@ -17,21 +19,49 @@ import (
 )
 
 func main() {
-	cfg := config.LoadConfig("config.yaml")
-
-	// Set up slog
-	logLevel := slog.LevelInfo
-	if cfg.Debug {
-		logLevel = slog.LevelDebug
+	manager, err := config.NewManager("config.yaml")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
+		os.Exit(1)
 	}
+
+	cfg := manager.GetConfig()
+
+	// Set up slog with dynamic level
+	logLevel := new(slog.LevelVar)
+	if cfg.Debug {
+		logLevel.Set(slog.LevelDebug)
+	} else {
+		logLevel.Set(slog.LevelInfo)
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 
-	webhookDispatcher := webhook.NewDispatcher(cfg)
+	// Setup Hot-Reload signal listener
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGHUP)
+		for {
+			<-sigChan
+			slog.Info("Received SIGHUP, reloading configuration")
+			if err := manager.Reload(); err != nil {
+				slog.Error("Failed to reload configuration", "error", err)
+			} else {
+				if manager.GetConfig().Debug {
+					logLevel.Set(slog.LevelDebug)
+				} else {
+					logLevel.Set(slog.LevelInfo)
+				}
+			}
+		}
+	}()
+
+	webhookDispatcher := webhook.NewDispatcher(manager)
 	globalHub := core.NewGlobalHub(webhookDispatcher)
 
-	wsServer := server.NewServer(globalHub, cfg)
-	restAPI := api.NewAPI(globalHub, cfg)
+	wsServer := server.NewServer(globalHub, manager)
+	restAPI := api.NewAPI(globalHub, manager)
 
 	mux := http.NewServeMux()
 

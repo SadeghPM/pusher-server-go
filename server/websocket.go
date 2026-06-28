@@ -59,23 +59,14 @@ type ChannelData struct {
 }
 
 type Server struct {
-	GlobalHub *core.GlobalHub
-	Config    *config.Config
-	appsByKey map[string]*config.AppConfig
+	GlobalHub     *core.GlobalHub
+	ConfigManager *config.Manager
 }
 
-func NewServer(globalHub *core.GlobalHub, cfg *config.Config) *Server {
-	appsByKey := make(map[string]*config.AppConfig)
-	if cfg != nil {
-		for i := range cfg.Apps {
-			appsByKey[cfg.Apps[i].AppKey] = &cfg.Apps[i]
-		}
-	}
-
+func NewServer(globalHub *core.GlobalHub, manager *config.Manager) *Server {
 	return &Server{
-		GlobalHub: globalHub,
-		Config:    cfg,
-		appsByKey: appsByKey,
+		GlobalHub:     globalHub,
+		ConfigManager: manager,
 	}
 }
 
@@ -84,7 +75,7 @@ func NewServer(globalHub *core.GlobalHub, cfg *config.Config) *Server {
 // so we need a unified handler that takes the appKey.
 func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey string) {
 	// Find the matching AppConfig
-	appCfg := s.appsByKey[appKey]
+	appCfg := s.ConfigManager.GetAppByKey(appKey)
 
 	if appCfg == nil {
 		http.Error(w, "App not found", http.StatusNotFound)
@@ -123,7 +114,8 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey 
 	client := core.NewClient(appHub, conn, socketID)
 	appHub.RegisterClient(client)
 
-	if s.Config.Debug {
+	cfg := s.ConfigManager.GetConfig()
+	if cfg != nil && cfg.Debug {
 		slog.Debug("Client connected",
 			"app_id", appCfg.AppID,
 			"socket_id", socketID,
@@ -135,7 +127,7 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey 
 	client.Send <- []byte(establishedPayload)
 
 	go s.writePump(client)
-	go s.readPump(client, appCfg.AppSecret, appCfg.AppKey, s.Config.Debug)
+	go s.readPump(client, appKey)
 }
 
 var socketIDCounter uint32
@@ -145,11 +137,12 @@ func generateSocketID() string {
 	return fmt.Sprintf("%d.%d", time.Now().Unix(), counter)
 }
 
-func (s *Server) readPump(client *core.Client, appSecret, appKey string, debug bool) {
+func (s *Server) readPump(client *core.Client, appKey string) {
 	defer func() {
 		client.AppHub.UnregisterClient(client)
 		client.Conn.Close()
-		if debug {
+		cfg := s.ConfigManager.GetConfig()
+		if cfg != nil && cfg.Debug {
 			slog.Debug("Client disconnected",
 				"app_id", client.AppHub.AppID,
 				"socket_id", client.SocketID,
@@ -159,7 +152,10 @@ func (s *Server) readPump(client *core.Client, appSecret, appKey string, debug b
 
 	client.Conn.SetReadLimit(maxMessageSize)
 	client.Conn.SetReadDeadline(time.Now().Add(pongWait))
-	client.Conn.SetPongHandler(func(string) error { client.Conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
+	client.Conn.SetPongHandler(func(string) error {
+		client.Conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
 
 	for {
 		_, message, err := client.Conn.ReadMessage()
@@ -175,7 +171,7 @@ func (s *Server) readPump(client *core.Client, appSecret, appKey string, debug b
 			break
 		}
 
-		s.handleMessage(client, message, appSecret, appKey, debug)
+		s.handleMessage(client, message, appKey)
 	}
 }
 
@@ -229,7 +225,15 @@ func (s *Server) handlePing(client *core.Client, debug bool) {
 	client.Send <- []byte(`{"event":"pusher:pong","data":"{}"}`)
 }
 
-func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appSecret, appKey string, debug bool) {
+func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appKey string) {
+	cfg := s.ConfigManager.GetConfig()
+	debug := cfg != nil && cfg.Debug
+	appCfg := s.ConfigManager.GetAppByKey(appKey)
+	if appCfg == nil {
+		return
+	}
+	appSecret := appCfg.AppSecret
+
 	var subData PusherSubscribeData
 
 	// Try unmarshaling string first
@@ -447,7 +451,10 @@ func (s *Server) handleClientEvent(client *core.Client, event PusherEvent, debug
 	}
 }
 
-func (s *Server) handleMessage(client *core.Client, message []byte, appSecret, appKey string, debug bool) {
+func (s *Server) handleMessage(client *core.Client, message []byte, appKey string) {
+	cfg := s.ConfigManager.GetConfig()
+	debug := cfg != nil && cfg.Debug
+
 	var event PusherEvent
 	if err := json.Unmarshal(message, &event); err != nil {
 		slog.Error("Invalid JSON received",
@@ -462,7 +469,7 @@ func (s *Server) handleMessage(client *core.Client, message []byte, appSecret, a
 	case "pusher:ping":
 		s.handlePing(client, debug)
 	case "pusher:subscribe":
-		s.handleSubscribe(client, event, appSecret, appKey, debug)
+		s.handleSubscribe(client, event, appKey)
 	case "pusher:unsubscribe":
 		s.handleUnsubscribe(client, event, debug)
 	default:

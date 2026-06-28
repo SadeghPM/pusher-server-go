@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestLoadConfig_WithPort(t *testing.T) {
+func TestNewManager_WithPort(t *testing.T) {
 	// Create a temporary directory
 	tempDir, err := os.MkdirTemp("", "config_test")
 	if err != nil {
@@ -28,7 +28,11 @@ apps:
 	}
 
 	// Load config
-	cfg := LoadConfig(tempFile)
+	manager, err := NewManager(tempFile)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+	cfg := manager.GetConfig()
 
 	// Verify port
 	if cfg.Port != "9090" {
@@ -40,7 +44,10 @@ apps:
 		t.Fatalf("Expected 1 app, got %d", len(cfg.Apps))
 	}
 
-	app := cfg.Apps[0]
+	app := manager.GetAppByID("test_app_id")
+	if app == nil {
+		t.Fatalf("Expected app with ID 'test_app_id', got nil")
+	}
 	if app.AppID != "test_app_id" {
 		t.Errorf("Expected app_id 'test_app_id', got '%s'", app.AppID)
 	}
@@ -52,7 +59,7 @@ apps:
 	}
 }
 
-func TestLoadConfig_DefaultPort(t *testing.T) {
+func TestNewManager_DefaultPort(t *testing.T) {
 	// Create a temporary directory
 	tempDir, err := os.MkdirTemp("", "config_test")
 	if err != nil {
@@ -73,7 +80,11 @@ apps:
 	}
 
 	// Load config
-	cfg := LoadConfig(tempFile)
+	manager, err := NewManager(tempFile)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+	cfg := manager.GetConfig()
 
 	// Verify default port
 	if cfg.Port != "6001" {
@@ -90,7 +101,10 @@ apps:
 		t.Fatalf("Expected 1 app, got %d", len(cfg.Apps))
 	}
 
-	app := cfg.Apps[0]
+	app := manager.GetAppByKey("test_app_key2")
+	if app == nil {
+		t.Fatalf("Expected app with key 'test_app_key2', got nil")
+	}
 	if app.AppID != "test_app_id2" {
 		t.Errorf("Expected app_id 'test_app_id2', got '%s'", app.AppID)
 	}
