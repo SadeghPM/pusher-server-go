@@ -15,17 +15,22 @@ type ChannelMember struct {
 
 // AppHub tracks the state for a single tenant (application).
 type AppHub struct {
-	mu       sync.RWMutex
-	AppID    string
-	Clients  map[string]*Client
-	Channels map[string]map[*Client]*ChannelMember
+	mu         sync.RWMutex
+	AppID      string
+	Clients    map[string]*Client
+	Channels   map[string]map[*Client]*ChannelMember
+	Dispatcher WebhookDispatcher
 }
 
-func NewAppHub(appID string) *AppHub {
+func NewAppHub(appID string, dispatcher WebhookDispatcher) *AppHub {
+	if dispatcher == nil {
+		dispatcher = &NoopWebhookDispatcher{}
+	}
 	return &AppHub{
-		AppID:    appID,
-		Clients:  make(map[string]*Client),
-		Channels: make(map[string]map[*Client]*ChannelMember),
+		AppID:      appID,
+		Clients:    make(map[string]*Client),
+		Channels:   make(map[string]map[*Client]*ChannelMember),
+		Dispatcher: dispatcher,
 	}
 }
 
@@ -93,12 +98,26 @@ func (h *AppHub) removeClientFromChannel(client *Client, channel string) {
 		if !hasOtherConnections {
 			payload := []byte(`{"event":"pusher_internal:member_removed","channel":"` + channel + `","data":"{\"user_id\":\"` + member.UserID + `\"}"}`)
 			go h.BroadcastToChannel(channel, payload, "")
+
+			go h.Dispatcher.Dispatch(h.AppID, []WebhookEvent{
+				{
+					Name:    "member_removed",
+					Channel: channel,
+					UserID:  member.UserID,
+				},
+			})
 		}
 	}
 
 	if len(subscribers) == 0 {
 		delete(h.Channels, channel)
 		metrics.ChannelsActive.WithLabelValues(h.AppID).Dec()
+		go h.Dispatcher.Dispatch(h.AppID, []WebhookEvent{
+			{
+				Name:    "channel_vacated",
+				Channel: channel,
+			},
+		})
 	}
 }
 
@@ -109,6 +128,12 @@ func (h *AppHub) Subscribe(client *Client, channel string, member *ChannelMember
 	if h.Channels[channel] == nil {
 		h.Channels[channel] = make(map[*Client]*ChannelMember)
 		metrics.ChannelsActive.WithLabelValues(h.AppID).Inc()
+		go h.Dispatcher.Dispatch(h.AppID, []WebhookEvent{
+			{
+				Name:    "channel_occupied",
+				Channel: channel,
+			},
+		})
 	}
 
 	isNewUser := false
@@ -172,13 +197,18 @@ func (h *AppHub) BroadcastToChannel(channel string, message []byte, excludeSocke
 
 // GlobalHub manages all AppHubs across the server.
 type GlobalHub struct {
-	mu      sync.RWMutex
-	AppHubs map[string]*AppHub // map AppID to AppHub
+	mu         sync.RWMutex
+	AppHubs    map[string]*AppHub // map AppID to AppHub
+	Dispatcher WebhookDispatcher
 }
 
-func NewGlobalHub() *GlobalHub {
+func NewGlobalHub(dispatcher WebhookDispatcher) *GlobalHub {
+	if dispatcher == nil {
+		dispatcher = &NoopWebhookDispatcher{}
+	}
 	return &GlobalHub{
-		AppHubs: make(map[string]*AppHub),
+		AppHubs:    make(map[string]*AppHub),
+		Dispatcher: dispatcher,
 	}
 }
 
@@ -190,7 +220,7 @@ func (gh *GlobalHub) GetOrCreateAppHub(appID string) *AppHub {
 		return hub
 	}
 
-	newHub := NewAppHub(appID)
+	newHub := NewAppHub(appID, gh.Dispatcher)
 	gh.AppHubs[appID] = newHub
 	return newHub
 }

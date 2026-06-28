@@ -33,7 +33,7 @@ func setupTestServer() (*httptest.Server, *Server, string, string, string) {
 			},
 		},
 	}
-	globalHub := core.NewGlobalHub()
+	globalHub := core.NewGlobalHub(nil)
 	server := NewServer(globalHub, cfg)
 
 	mux := http.NewServeMux()
@@ -669,7 +669,7 @@ func TestWebSocketOriginValidation(t *testing.T) {
 			},
 		},
 	}
-	globalHub := core.NewGlobalHub()
+	globalHub := core.NewGlobalHub(nil)
 	server := NewServer(globalHub, cfg)
 
 	mux := http.NewServeMux()
