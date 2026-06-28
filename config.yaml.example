@@ -1,4 +1,5 @@
-port: "8080"
+port: "6001"
+metrics_port: "9601"
 debug: false
 apps:
   - app_id: "my-app-id-1"
