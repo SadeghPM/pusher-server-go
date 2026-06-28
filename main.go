@@ -11,6 +11,7 @@ import (
 	"pusher-clone/config"
 	"pusher-clone/core"
 	"pusher-clone/server"
+	"pusher-clone/webhook"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -26,7 +27,8 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 
-	globalHub := core.NewGlobalHub()
+	webhookDispatcher := webhook.NewDispatcher(cfg)
+	globalHub := core.NewGlobalHub(webhookDispatcher)
 
 	wsServer := server.NewServer(globalHub, cfg)
 	restAPI := api.NewAPI(globalHub, cfg)
