@@ -14,6 +14,7 @@ import (
 
 	"pusher-clone/config"
 	"pusher-clone/core"
+	"pusher-clone/metrics"
 )
 
 type API struct {
@@ -107,6 +108,8 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 
 		appHub.BroadcastToChannel(channel, []byte(message), payload.SocketID)
 	}
+
+	metrics.RestAPIEventsTotal.WithLabelValues(appID).Inc()
 
 	// Respond with success
 	if a.Config != nil && a.Config.Debug {
