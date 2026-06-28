@@ -35,7 +35,7 @@ func LoadConfig(filename string) *Config {
 	}
 
 	if cfg.Port == "" {
-		cfg.Port = "8080"
+		cfg.Port = "6001"
 	}
 
 	return &cfg

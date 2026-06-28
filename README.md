@@ -34,7 +34,7 @@ The server relies on a `config.yaml` file for setup. Each app in your `apps` blo
 To enhance security, you should configure the `allowed_origins` list for each app. If `allowed_origins` is omitted or empty, the server defaults to allowing connections from any origin.
 
 ```yaml
-port: "8080"
+port: "6001"
 debug: false
 apps:
   - app_id: "my-app-id-1"
@@ -49,11 +49,11 @@ apps:
 go run main.go
 ```
 
-The server will start on the port specified in your `config.yaml` file (default: 8080).
+The server will start on the port specified in your `config.yaml` file (default: 6001).
 
 ## Observability & Metrics
 
-The server exposes Prometheus metrics at the `/metrics` endpoint to help monitor the health, scale, and performance of your applications.
+The server exposes Prometheus metrics on a dedicated port (`9601`) at the `/metrics` endpoint to help monitor the health, scale, and performance of your applications.
 
 Available metrics include:
 - `pusher_active_connections` (Gauge) - Current number of active WebSocket connections per app.
@@ -74,7 +74,7 @@ To use this clone in your Laravel application, update your `config/broadcasting.
     'app_id' => env('PUSHER_APP_ID'),
     'options' => [
         'host' => '127.0.0.1', // Your Go server's IP
-        'port' => 8080,        // Your Go server's Port
+        'port' => 6001,        // Your Go server's Port
         'scheme' => 'http',
         'encrypted' => false,
         'useTLS' => false,

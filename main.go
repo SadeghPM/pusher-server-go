@@ -60,11 +60,19 @@ func main() {
 		http.NotFound(w, r)
 	})
 
-	// Prometheus metrics endpoint
-	mux.Handle("/metrics", promhttp.Handler())
-
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	slog.Info("Starting Multi-Tenant Pusher clone server", "addr", addr)
+
+	// Run Prometheus metrics server on port 9601 in a separate goroutine
+	go func() {
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle("/metrics", promhttp.Handler())
+		metricsAddr := ":9601"
+		slog.Info("Starting Prometheus metrics server", "addr", metricsAddr)
+		if err := http.ListenAndServe(metricsAddr, metricsMux); err != nil {
+			slog.Error("Metrics ListenAndServe failed", "error", err)
+		}
+	}()
 
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		slog.Error("ListenAndServe failed", "error", err)

@@ -1,4 +1,4 @@
-port: "8080"
+port: "6001"
 apps:
   - app_id: "my-app-id-1"
     app_key: "my-app-key-1"
