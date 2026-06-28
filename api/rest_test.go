@@ -18,7 +18,7 @@ import (
 
 func TestHandleEventsBadAppID(t *testing.T) {
 	cfg := &config.Config{
-		Port: "8080",
+		Port: "6001",
 		Apps: []config.AppConfig{
 			{
 				AppID:     "123",
@@ -44,7 +44,7 @@ func TestHandleEventsBadAppID(t *testing.T) {
 
 func TestHandleEventsAuth(t *testing.T) {
 	cfg := &config.Config{
-		Port: "8080",
+		Port: "6001",
 		Apps: []config.AppConfig{
 			{
 				AppID:     "123",
@@ -90,7 +90,7 @@ func TestHandleEventsAuth(t *testing.T) {
 
 func TestHandleEventsAuthFailure_BadKey(t *testing.T) {
 	cfg := &config.Config{
-		Port: "8080",
+		Port: "6001",
 		Apps: []config.AppConfig{
 			{
 				AppID:     "123",
@@ -136,7 +136,7 @@ func TestHandleEventsAuthFailure_BadKey(t *testing.T) {
 
 func TestHandleEventsAuthFailure_BadMD5(t *testing.T) {
 	cfg := &config.Config{
-		Port: "8080",
+		Port: "6001",
 		Apps: []config.AppConfig{
 			{
 				AppID:     "123",
@@ -180,7 +180,7 @@ func TestHandleEventsAuthFailure_BadMD5(t *testing.T) {
 
 func TestHandleEventsAuthFailure_BadSignature(t *testing.T) {
 	cfg := &config.Config{
-		Port: "8080",
+		Port: "6001",
 		Apps: []config.AppConfig{
 			{
 				AppID:     "123",
@@ -220,7 +220,7 @@ func TestHandleEventsAuthFailure_BadSignature(t *testing.T) {
 
 func TestHandleEventsInvalidJSON(t *testing.T) {
 	cfg := &config.Config{
-		Port: "8080",
+		Port: "6001",
 		Apps: []config.AppConfig{
 			{
 				AppID:     "123",
@@ -266,7 +266,7 @@ func TestHandleEventsInvalidJSON(t *testing.T) {
 
 func TestHandleEventsPayloadTooLarge(t *testing.T) {
 	cfg := &config.Config{
-		Port: "8080",
+		Port: "6001",
 		Apps: []config.AppConfig{
 			{
 				AppID:     "123",
@@ -294,7 +294,7 @@ func TestHandleEventsPayloadTooLarge(t *testing.T) {
 
 func TestHandleEventsMethodNotAllowed(t *testing.T) {
 	cfg := &config.Config{
-		Port: "8080",
+		Port: "6001",
 		Apps: []config.AppConfig{
 			{
 				AppID:     "123",
@@ -319,7 +319,7 @@ func TestHandleEventsMethodNotAllowed(t *testing.T) {
 
 func TestHandleEventsAppNotFound(t *testing.T) {
 	cfg := &config.Config{
-		Port: "8080",
+		Port: "6001",
 		Apps: []config.AppConfig{
 			{
 				AppID:     "123",
@@ -350,7 +350,7 @@ func (errReader) Read(p []byte) (n int, err error) {
 
 func TestHandleEventsBadBody(t *testing.T) {
 	cfg := &config.Config{
-		Port: "8080",
+		Port: "6001",
 		Apps: []config.AppConfig{
 			{
 				AppID:     "123",

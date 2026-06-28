@@ -76,8 +76,13 @@ apps:
 	cfg := LoadConfig(tempFile)
 
 	// Verify default port
-	if cfg.Port != "8080" {
-		t.Errorf("Expected default port '8080', got '%s'", cfg.Port)
+	if cfg.Port != "6001" {
+		t.Errorf("Expected default port '6001', got '%s'", cfg.Port)
+	}
+
+	// Verify default metrics port
+	if cfg.MetricsPort != "9601" {
+		t.Errorf("Expected default metrics port '9601', got '%s'", cfg.MetricsPort)
 	}
 
 	// Verify apps

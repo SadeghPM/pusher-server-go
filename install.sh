@@ -79,8 +79,8 @@ check_port() {
   return 0
 }
 
-read -p "Enter port for Pusher Clone [8080]: " INPUT_PORT
-PORT=${INPUT_PORT:-8080}
+read -p "Enter port for Pusher Clone [6001]: " INPUT_PORT
+PORT=${INPUT_PORT:-6001}
 
 while ! check_port "$PORT"; do
   echo -e "${RED}Port ${PORT} is currently in use.${NC}"
@@ -88,6 +88,16 @@ while ! check_port "$PORT"; do
 done
 
 echo -e "${GREEN}Using port ${PORT}.${NC}"
+
+read -p "Enter port for Prometheus Metrics [9601]: " INPUT_METRICS_PORT
+METRICS_PORT=${INPUT_METRICS_PORT:-9601}
+
+while ! check_port "$METRICS_PORT"; do
+  echo -e "${RED}Port ${METRICS_PORT} is currently in use.${NC}"
+  read -p "Enter a different metrics port: " METRICS_PORT
+done
+
+echo -e "${GREEN}Using metrics port ${METRICS_PORT}.${NC}"
 
 # Default automated config setup
 APP_ID=$(cat /dev/urandom | tr -dc '0-9' | fold -w 6 | head -n 1)
@@ -98,6 +108,7 @@ APP_SECRET=${RANDOM_SECRET}
 
 cat << YAMLEOF > config.yaml.install.tmp
 port: "${PORT}"
+metrics_port: "${METRICS_PORT}"
 apps:
   - app_id: "${APP_ID}"
     app_key: "${APP_KEY}"
