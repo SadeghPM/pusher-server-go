@@ -16,9 +16,10 @@ type AppConfig struct {
 }
 
 type Config struct {
-	Port  string      `yaml:"port"`
-	Debug bool        `yaml:"debug"`
-	Apps  []AppConfig `yaml:"apps"`
+	Port        string      `yaml:"port"`
+	MetricsPort string      `yaml:"metrics_port"`
+	Debug       bool        `yaml:"debug"`
+	Apps        []AppConfig `yaml:"apps"`
 }
 
 func LoadConfig(filename string) *Config {
@@ -36,7 +37,10 @@ func LoadConfig(filename string) *Config {
 	}
 
 	if cfg.Port == "" {
-		cfg.Port = "8080"
+		cfg.Port = "6001"
+	}
+	if cfg.MetricsPort == "" {
+		cfg.MetricsPort = "9601"
 	}
 
 	return &cfg
