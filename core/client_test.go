@@ -7,7 +7,7 @@ import (
 )
 
 func TestNewClient(t *testing.T) {
-	appHub := NewAppHub("test-app")
+	appHub := NewAppHub("test-app", nil)
 	var conn *websocket.Conn = nil
 	socketID := "12345.67890"
 

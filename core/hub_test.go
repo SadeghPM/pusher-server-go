@@ -5,7 +5,7 @@ import (
 )
 
 func TestAppHubRegistration(t *testing.T) {
-	hub := NewAppHub("test-app")
+	hub := NewAppHub("test-app", nil)
 	client := &Client{SocketID: "123.456", Send: make(chan []byte)}
 
 	hub.RegisterClient(client)
@@ -22,7 +22,7 @@ func TestAppHubRegistration(t *testing.T) {
 }
 
 func TestAppHubSubscription(t *testing.T) {
-	hub := NewAppHub("test-app")
+	hub := NewAppHub("test-app", nil)
 	client := &Client{SocketID: "123.456", Send: make(chan []byte)}
 	hub.RegisterClient(client)
 
@@ -34,7 +34,7 @@ func TestAppHubSubscription(t *testing.T) {
 }
 
 func TestAppHubUnsubscribeNonExistentChannel(t *testing.T) {
-	hub := NewAppHub("test-app")
+	hub := NewAppHub("test-app", nil)
 	client := &Client{SocketID: "123.456", Send: make(chan []byte)}
 	hub.RegisterClient(client)
 
@@ -47,7 +47,7 @@ func TestAppHubUnsubscribeNonExistentChannel(t *testing.T) {
 }
 
 func TestGlobalHub(t *testing.T) {
-	global := NewGlobalHub()
+	global := NewGlobalHub(nil)
 
 	hub1 := global.GetOrCreateAppHub("app1")
 	hub2 := global.GetOrCreateAppHub("app2")
@@ -63,7 +63,7 @@ func TestGlobalHub(t *testing.T) {
 }
 
 func TestAppHubGetPresenceMembers(t *testing.T) {
-	hub := NewAppHub("test-app")
+	hub := NewAppHub("test-app", nil)
 
 	// Create some clients
 	client1 := &Client{SocketID: "123.456", Send: make(chan []byte)}
@@ -124,7 +124,7 @@ func TestAppHubGetPresenceMembers(t *testing.T) {
 }
 
 func TestAppHubBroadcastToChannel(t *testing.T) {
-	hub := NewAppHub("test-app")
+	hub := NewAppHub("test-app", nil)
 	channelName := "test-channel"
 
 	// Create clients with buffered channels so sends don't block

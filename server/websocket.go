@@ -357,6 +357,14 @@ func (s *Server) handlePresenceSubscriptionSuccess(client *core.Client, channel 
 
 		memberAddedPayload := fmt.Sprintf(`{"event":"pusher_internal:member_added","channel":"%s","data":%s}`, channel, safeMemberDataBytes)
 		client.AppHub.BroadcastToChannel(channel, []byte(memberAddedPayload), client.SocketID)
+
+		go client.AppHub.Dispatcher.Dispatch(client.AppHub.AppID, []core.WebhookEvent{
+			{
+				Name:    "member_added",
+				Channel: channel,
+				UserID:  member.UserID,
+			},
+		})
 	}
 }
 
