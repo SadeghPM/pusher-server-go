@@ -5,6 +5,7 @@ A lightweight, in-memory, multi-tenant Pusher alternative written in Go, specifi
 ## Features
 
 - Fully compatible with Pusher Protocol v7
+- Built-in Prometheus metrics exporter (`/metrics` endpoint)
 - Multi-tenant: Support multiple Laravel applications with a single server instance
 - Configured via YAML
 - Supports public and private channels
@@ -49,6 +50,17 @@ go run main.go
 ```
 
 The server will start on the port specified in your `config.yaml` file (default: 8080).
+
+## Observability & Metrics
+
+The server exposes Prometheus metrics at the `/metrics` endpoint to help monitor the health, scale, and performance of your applications.
+
+Available metrics include:
+- `pusher_active_connections` (Gauge) - Current number of active WebSocket connections per app.
+- `pusher_channels_active` (Gauge) - Current number of active channels per app.
+- `pusher_messages_published_total` (Counter) - Total number of messages published per app.
+- `pusher_rest_api_events_total` (Counter) - Total number of events published via the REST API per app.
+- `pusher_websocket_errors_total` (Counter) - Total number of WebSocket errors per app (broken down by read/write/ping).
 
 ## Laravel Configuration
 

@@ -16,6 +16,7 @@ import (
 
 	"pusher-clone/config"
 	"pusher-clone/core"
+	"pusher-clone/metrics"
 )
 
 const (
@@ -169,6 +170,7 @@ func (s *Server) readPump(client *core.Client, appSecret, appKey string, debug b
 					"app_id", client.AppHub.AppID,
 					"socket_id", client.SocketID,
 				)
+				metrics.WebsocketErrorsTotal.WithLabelValues(client.AppHub.AppID, "read").Inc()
 			}
 			break
 		}
@@ -194,6 +196,7 @@ func (s *Server) writePump(client *core.Client) {
 			}
 
 			if err := client.Conn.WriteMessage(websocket.TextMessage, message); err != nil {
+				metrics.WebsocketErrorsTotal.WithLabelValues(client.AppHub.AppID, "write").Inc()
 				return
 			}
 
@@ -201,12 +204,14 @@ func (s *Server) writePump(client *core.Client) {
 			n := len(client.Send)
 			for i := 0; i < n; i++ {
 				if err := client.Conn.WriteMessage(websocket.TextMessage, <-client.Send); err != nil {
+					metrics.WebsocketErrorsTotal.WithLabelValues(client.AppHub.AppID, "write").Inc()
 					return
 				}
 			}
 		case <-ticker.C:
 			client.Conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := client.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				metrics.WebsocketErrorsTotal.WithLabelValues(client.AppHub.AppID, "ping").Inc()
 				return
 			}
 		}

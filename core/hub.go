@@ -3,6 +3,8 @@ package core
 import (
 	"encoding/json"
 	"sync"
+
+	"pusher-clone/metrics"
 )
 
 // ChannelMember holds data about a user subscribed to a presence channel.
@@ -31,6 +33,7 @@ func (h *AppHub) RegisterClient(client *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.Clients[client.SocketID] = client
+	metrics.ActiveConnections.WithLabelValues(h.AppID).Inc()
 }
 
 func (h *AppHub) UnregisterClient(client *Client) {
@@ -39,6 +42,7 @@ func (h *AppHub) UnregisterClient(client *Client) {
 
 	if _, ok := h.Clients[client.SocketID]; ok {
 		delete(h.Clients, client.SocketID)
+		metrics.ActiveConnections.WithLabelValues(h.AppID).Dec()
 
 		// Remove from all channels
 		var channelsToRemove []string
@@ -94,6 +98,7 @@ func (h *AppHub) removeClientFromChannel(client *Client, channel string) {
 
 	if len(subscribers) == 0 {
 		delete(h.Channels, channel)
+		metrics.ChannelsActive.WithLabelValues(h.AppID).Dec()
 	}
 }
 
@@ -103,6 +108,7 @@ func (h *AppHub) Subscribe(client *Client, channel string, member *ChannelMember
 
 	if h.Channels[channel] == nil {
 		h.Channels[channel] = make(map[*Client]*ChannelMember)
+		metrics.ChannelsActive.WithLabelValues(h.AppID).Inc()
 	}
 
 	isNewUser := false
@@ -148,6 +154,8 @@ func (h *AppHub) GetPresenceMembers(channel string) map[string]json.RawMessage {
 func (h *AppHub) BroadcastToChannel(channel string, message []byte, excludeSocketID string) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+
+	metrics.MessagesPublishedTotal.WithLabelValues(h.AppID).Inc()
 
 	if subscribers, ok := h.Channels[channel]; ok {
 		for client := range subscribers {
