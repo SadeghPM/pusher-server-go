@@ -11,6 +11,8 @@ import (
 	"pusher-clone/config"
 	"pusher-clone/core"
 	"pusher-clone/server"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
@@ -57,6 +59,9 @@ func main() {
 
 		http.NotFound(w, r)
 	})
+
+	// Prometheus metrics endpoint
+	mux.Handle("/metrics", promhttp.Handler())
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	slog.Info("Starting Multi-Tenant Pusher clone server", "addr", addr)
