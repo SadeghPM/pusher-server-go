@@ -1,7 +1,9 @@
 port: "6001"
 metrics_port: "9601"
-debug: false
 apps:
-  - app_id: "test2"
-    app_key: "test2"
-    app_secret: "test2"
+  - app_id: "my-app-id-1"
+    app_key: "my-app-key-1"
+    app_secret: "my-app-secret-1"
+  - app_id: "my-app-id-2"
+    app_key: "my-app-key-2"
+    app_secret: "my-app-secret-2"
