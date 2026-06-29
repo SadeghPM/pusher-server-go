@@ -15,6 +15,7 @@ import (
 	"pusher-clone/server"
 	"pusher-clone/webhook"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -53,6 +54,47 @@ func main() {
 				} else {
 					logLevel.Set(slog.LevelInfo)
 				}
+			}
+		}
+	}()
+
+	// Setup Hot-Reload via File Watcher using fsnotify
+	go func() {
+		watcher, err := fsnotify.NewWatcher()
+		if err != nil {
+			slog.Error("Failed to create file watcher for hot-reload", "error", err)
+			return
+		}
+		defer watcher.Close()
+
+		if err := watcher.Add("config.yaml"); err != nil {
+			slog.Error("Failed to add config.yaml to file watcher", "error", err)
+			return
+		}
+
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				if event.Has(fsnotify.Write) {
+					slog.Info("Detected config.yaml change via fsnotify, auto-reloading configuration")
+					if err := manager.Reload(); err != nil {
+						slog.Error("Failed to auto-reload configuration", "error", err)
+					} else {
+						if manager.GetConfig().Debug {
+							logLevel.Set(slog.LevelDebug)
+						} else {
+							logLevel.Set(slog.LevelInfo)
+						}
+					}
+				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				slog.Error("File watcher error", "error", err)
 			}
 		}
 	}()
