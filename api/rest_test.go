@@ -28,7 +28,7 @@ func TestHandleEventsBadAppID(t *testing.T) {
 		},
 	}
 	globalHub := core.NewGlobalHub(nil)
-	api := NewAPI(globalHub, cfg)
+	api := NewAPI(globalHub, config.NewManagerFromConfig(cfg))
 
 	body := []byte(`{"name":"my-event","channel":"my-channel","data":"{\"message\":\"hello\"}"}`)
 
@@ -54,7 +54,7 @@ func TestHandleEventsAuth(t *testing.T) {
 		},
 	}
 	globalHub := core.NewGlobalHub(nil)
-	api := NewAPI(globalHub, cfg)
+	api := NewAPI(globalHub, config.NewManagerFromConfig(cfg))
 
 	body := []byte(`{"name":"my-event","channel":"my-channel","data":"{\"message\":\"hello\"}"}`)
 
@@ -100,7 +100,7 @@ func TestHandleEventsAuthFailure_BadKey(t *testing.T) {
 		},
 	}
 	globalHub := core.NewGlobalHub(nil)
-	api := NewAPI(globalHub, cfg)
+	api := NewAPI(globalHub, config.NewManagerFromConfig(cfg))
 
 	body := []byte(`{"name":"my-event","channel":"my-channel","data":"{\"message\":\"hello\"}"}`)
 
@@ -146,7 +146,7 @@ func TestHandleEventsAuthFailure_BadMD5(t *testing.T) {
 		},
 	}
 	globalHub := core.NewGlobalHub(nil)
-	api := NewAPI(globalHub, cfg)
+	api := NewAPI(globalHub, config.NewManagerFromConfig(cfg))
 
 	body := []byte(`{"name":"my-event","channel":"my-channel","data":"{\"message\":\"hello\"}"}`)
 
@@ -190,7 +190,7 @@ func TestHandleEventsAuthFailure_BadSignature(t *testing.T) {
 		},
 	}
 	globalHub := core.NewGlobalHub(nil)
-	api := NewAPI(globalHub, cfg)
+	api := NewAPI(globalHub, config.NewManagerFromConfig(cfg))
 
 	body := []byte(`{"name":"my-event","channel":"my-channel","data":"{\"message\":\"hello\"}"}`)
 
@@ -230,7 +230,7 @@ func TestHandleEventsInvalidJSON(t *testing.T) {
 		},
 	}
 	globalHub := core.NewGlobalHub(nil)
-	api := NewAPI(globalHub, cfg)
+	api := NewAPI(globalHub, config.NewManagerFromConfig(cfg))
 
 	body := []byte(`{invalid json`)
 
@@ -276,7 +276,7 @@ func TestHandleEventsPayloadTooLarge(t *testing.T) {
 		},
 	}
 	globalHub := core.NewGlobalHub(nil)
-	api := NewAPI(globalHub, cfg)
+	api := NewAPI(globalHub, config.NewManagerFromConfig(cfg))
 
 	// Create a body larger than 1MB
 	largeBody := bytes.Repeat([]byte("a"), 1048576+1)
@@ -304,7 +304,7 @@ func TestHandleEventsMethodNotAllowed(t *testing.T) {
 		},
 	}
 	globalHub := core.NewGlobalHub(nil)
-	api := NewAPI(globalHub, cfg)
+	api := NewAPI(globalHub, config.NewManagerFromConfig(cfg))
 
 	url := "/apps/123/events"
 	req := httptest.NewRequest("GET", url, nil)
@@ -329,7 +329,7 @@ func TestHandleEventsAppNotFound(t *testing.T) {
 		},
 	}
 	globalHub := core.NewGlobalHub(nil)
-	api := NewAPI(globalHub, cfg)
+	api := NewAPI(globalHub, config.NewManagerFromConfig(cfg))
 
 	url := "/apps/999/events"
 	req := httptest.NewRequest("POST", url, bytes.NewBuffer([]byte(`{}`)))
@@ -360,7 +360,7 @@ func TestHandleEventsBadBody(t *testing.T) {
 		},
 	}
 	globalHub := core.NewGlobalHub(nil)
-	api := NewAPI(globalHub, cfg)
+	api := NewAPI(globalHub, config.NewManagerFromConfig(cfg))
 
 	url := "/apps/123/events"
 	req := httptest.NewRequest("POST", url, errReader(0))
