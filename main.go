@@ -13,25 +13,76 @@ import (
 	"pusher-clone/server"
 	"pusher-clone/webhook"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
-	cfg := config.LoadConfig("config.yaml")
-
-	// Set up slog
-	logLevel := slog.LevelInfo
-	if cfg.Debug {
-		logLevel = slog.LevelDebug
+	manager, err := config.NewManager("config.yaml")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
+		os.Exit(1)
 	}
+
+	cfg := manager.GetConfig()
+
+	// Set up slog with dynamic level
+	logLevel := new(slog.LevelVar)
+	if cfg.Debug {
+		logLevel.Set(slog.LevelDebug)
+	} else {
+		logLevel.Set(slog.LevelInfo)
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 
-	webhookDispatcher := webhook.NewDispatcher(cfg)
+	// Setup Hot-Reload via File Watcher using fsnotify
+	go func() {
+		watcher, err := fsnotify.NewWatcher()
+		if err != nil {
+			slog.Error("Failed to create file watcher for hot-reload", "error", err)
+			return
+		}
+		defer watcher.Close()
+
+		if err := watcher.Add("config.yaml"); err != nil {
+			slog.Error("Failed to add config.yaml to file watcher", "error", err)
+			return
+		}
+
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				if event.Has(fsnotify.Write) {
+					slog.Info("Detected config.yaml change via fsnotify, auto-reloading configuration")
+					if err := manager.Reload(); err != nil {
+						slog.Error("Failed to auto-reload configuration", "error", err)
+					} else {
+						if manager.GetConfig().Debug {
+							logLevel.Set(slog.LevelDebug)
+						} else {
+							logLevel.Set(slog.LevelInfo)
+						}
+					}
+				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				slog.Error("File watcher error", "error", err)
+			}
+		}
+	}()
+
+	webhookDispatcher := webhook.NewDispatcher(manager)
 	globalHub := core.NewGlobalHub(webhookDispatcher)
 
-	wsServer := server.NewServer(globalHub, cfg)
-	restAPI := api.NewAPI(globalHub, cfg)
+	wsServer := server.NewServer(globalHub, manager)
+	restAPI := api.NewAPI(globalHub, manager)
 
 	mux := http.NewServeMux()
 
