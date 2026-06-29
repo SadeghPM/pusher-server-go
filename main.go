@@ -5,9 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 
 	"pusher-clone/api"
 	"pusher-clone/config"
@@ -38,25 +36,6 @@ func main() {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
-
-	// Setup Hot-Reload signal listener
-	go func() {
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGHUP)
-		for {
-			<-sigChan
-			slog.Info("Received SIGHUP, reloading configuration")
-			if err := manager.Reload(); err != nil {
-				slog.Error("Failed to reload configuration", "error", err)
-			} else {
-				if manager.GetConfig().Debug {
-					logLevel.Set(slog.LevelDebug)
-				} else {
-					logLevel.Set(slog.LevelInfo)
-				}
-			}
-		}
-	}()
 
 	// Setup Hot-Reload via File Watcher using fsnotify
 	go func() {
