@@ -93,12 +93,16 @@ func (s *Server) Start() {
 
 func (s *Server) handleApps(w http.ResponseWriter, r *http.Request) {
 	cfg := s.ConfigManager.GetConfig()
-	apps := make([]map[string]string, 0)
+	apps := make([]map[string]interface{}, 0)
 
 	for _, app := range cfg.Apps {
-		apps = append(apps, map[string]string{
-			"app_id": app.AppID,
-			"name":   app.AppID,
+		apps = append(apps, map[string]interface{}{
+			"app_id":          app.AppID,
+			"name":            app.AppID,
+			"app_key":         app.AppKey,
+			"app_secret":      app.AppSecret,
+			"allowed_origins": app.AllowedOrigins,
+			"webhooks":        app.Webhooks,
 		})
 	}
 

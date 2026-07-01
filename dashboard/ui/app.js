@@ -15,8 +15,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnPause = document.getElementById('btn-pause');
     const btnClear = document.getElementById('btn-clear');
     const searchInput = document.getElementById('search-events');
+    const navDebug = document.getElementById('nav-debug');
+    const navOverview = document.getElementById('nav-overview');
+    const viewDebug = document.getElementById('view-debug');
+    const viewOverview = document.getElementById('view-overview');
+    const appTitle = document.getElementById('app-title');
 
     let ws = null;
+    let allApps = [];
     let isPaused = false;
     let events = [];
 
@@ -35,6 +41,37 @@ document.addEventListener('DOMContentLoaded', () => {
             modal.style.display = 'none';
             initDashboard();
         }
+	});
+
+    function renderOverview() {
+        const appId = appSelector.value;
+        const app = allApps.find(a => a.app_id === appId);
+        if (!app) return;
+
+        document.getElementById('overview-app-id').value = app.app_id;
+        document.getElementById('overview-key').value = app.app_key || '';
+        document.getElementById('overview-secret').value = app.app_secret || '';
+        document.getElementById('overview-origins').value = (app.allowed_origins || []).join('\n');
+        document.getElementById('overview-webhooks').value = (app.webhooks || []).join('\n');
+    }
+
+    navDebug.addEventListener('click', (e) => {
+        e.preventDefault();
+        navDebug.classList.add('active');
+        navOverview.classList.remove('active');
+        viewDebug.style.display = 'block';
+        viewOverview.style.display = 'none';
+        appTitle.textContent = 'Debug console';
+    });
+
+    navOverview.addEventListener('click', (e) => {
+        e.preventDefault();
+        navOverview.classList.add('active');
+        navDebug.classList.remove('active');
+        viewDebug.style.display = 'none';
+        viewOverview.style.display = 'block';
+        appTitle.textContent = 'Overview';
+        renderOverview();
     });
 
     btnLogout.addEventListener('click', () => {
@@ -54,6 +91,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error("Unauthorized");
             }
             const apps = await res.json();
+            allApps = apps;
 
             appSelector.innerHTML = '';
             apps.forEach(app => {
@@ -69,8 +107,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             appSelector.addEventListener('change', (e) => {
                 connectWebSocket(e.target.value);
+                renderOverview();
             });
 
+        renderOverview();
         } catch (err) {
             alert('Authentication failed or server error.');
             localStorage.removeItem('pusher_admin_token');

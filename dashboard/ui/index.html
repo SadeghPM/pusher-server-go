@@ -34,8 +34,8 @@
             <aside class="sidebar">
                 <nav>
                     <ul>
-                        <li><a href="#" class="active">Debug Console</a></li>
-                        <li><a href="#">Overview</a></li>
+                        <li><a href="#" class="active" id="nav-debug">Debug Console</a></li>
+                        <li><a href="#" id="nav-overview">Overview</a></li>
                     </ul>
                 </nav>
             </aside>
@@ -44,6 +44,7 @@
             <main class="main-content">
                 <h1 id="app-title">Debug console</h1>
 
+                <div id="view-debug">
                 <div class="controls">
                     <button id="btn-pause" class="btn">Pause</button>
                     <button id="btn-clear" class="btn">Clear logs</button>
@@ -89,6 +90,36 @@
                             </tr>
                         </tbody>
                     </table>
+                </div>
+                </div>
+
+                <div id="view-overview" style="display: none;">
+                    <div class="overview-card">
+                        <h3>App Credentials</h3>
+                        <div class="overview-item">
+                            <label>App ID</label>
+                            <input type="text" id="overview-app-id" readonly>
+                        </div>
+                        <div class="overview-item">
+                            <label>Key</label>
+                            <input type="text" id="overview-key" readonly>
+                        </div>
+                        <div class="overview-item">
+                            <label>Secret</label>
+                            <input type="text" id="overview-secret" readonly>
+                        </div>
+                    </div>
+                    <div class="overview-card" style="margin-top: 20px;">
+                        <h3>Configuration</h3>
+                        <div class="overview-item">
+                            <label>Allowed Origins</label>
+                            <textarea id="overview-origins" readonly rows="3"></textarea>
+                        </div>
+                        <div class="overview-item">
+                            <label>Webhooks</label>
+                            <textarea id="overview-webhooks" readonly rows="3"></textarea>
+                        </div>
+                    </div>
                 </div>
             </main>
         </div>
