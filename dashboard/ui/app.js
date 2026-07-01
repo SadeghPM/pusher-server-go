@@ -267,6 +267,12 @@ document.addEventListener('DOMContentLoaded', () => {
         subscription: 'badge-subscription',
         api_message: 'badge-api_message',
         client_event: 'badge-client_event',
+        webhook_error: 'badge-error',
+        webhook_success: 'badge-webhook',
+        subscription_error: 'badge-error',
+        api_error: 'badge-error',
+        connection_error: 'badge-error',
+        auth_error: 'badge-error',
     };
 
     function renderEvents() {
@@ -289,8 +295,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const tr = document.createElement('tr');
 
             const date = new Date(e.time);
-            const timeStr = date.toLocaleTimeString([], { hour12: false }) +
-                            '.' + String(date.getMilliseconds()).padStart(3, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
+            const ms = String(date.getMilliseconds()).padStart(3, '0');
+            const timeStr = `${hours}:${minutes}:${seconds}.${ms}`;
 
             const badgeClass = BADGE_CLASSES[e.type] || 'badge-default';
             let eventCol = `<span class="badge ${badgeClass}">${e.type}</span>`;
