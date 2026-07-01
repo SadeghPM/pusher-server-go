@@ -1,11 +1,23 @@
 port: "6001"
 metrics_port: "9601"
 dashboard_port: "5174"
-admin_token: "my-super-secret-admin-token"
+admin_token: my-super-secret-admin-token
+debug: false
 apps:
-  - app_id: "my-app-id-1"
-    app_key: "my-app-key-1"
-    app_secret: "my-app-secret-1"
-  - app_id: "my-app-id-2"
-    app_key: "my-app-key-2"
-    app_secret: "my-app-secret-2"
+    - app_id: my-app-id-1
+      app_key: my-app-key-1
+      app_secret: my-app-secret-1
+      allowed_origins: []
+      webhooks: []
+    - app_id: my-app-id-2
+      app_key: my-app-key-2
+      app_secret: my-app-secret-2
+      allowed_origins: []
+      webhooks: []
+    - app_id: app-3
+      app_key: 11bff8fe992a112ac223ef1c27e77fe5
+      app_secret: e7bc85bffc15b68ee80318e58cfac1ba5366a2f72ffd6fa8
+      allowed_origins:
+        - '*'
+      webhooks:
+        - http://localhost/webhook
