@@ -197,9 +197,10 @@ func (h *AppHub) BroadcastToChannel(channel string, message []byte, excludeSocke
 
 // GlobalHub manages all AppHubs across the server.
 type GlobalHub struct {
-	mu         sync.RWMutex
-	AppHubs    map[string]*AppHub // map AppID to AppHub
-	Dispatcher WebhookDispatcher
+	mu          sync.RWMutex
+	AppHubs     map[string]*AppHub // map AppID to AppHub
+	Dispatcher  WebhookDispatcher
+	DebugNotify func(appID, eventType, socketID, channel, event, data string)
 }
 
 func NewGlobalHub(dispatcher WebhookDispatcher) *GlobalHub {
@@ -207,8 +208,9 @@ func NewGlobalHub(dispatcher WebhookDispatcher) *GlobalHub {
 		dispatcher = &NoopWebhookDispatcher{}
 	}
 	return &GlobalHub{
-		AppHubs:    make(map[string]*AppHub),
-		Dispatcher: dispatcher,
+		AppHubs:     make(map[string]*AppHub),
+		Dispatcher:  dispatcher,
+		DebugNotify: func(appID, eventType, socketID, channel, event, data string) {},
 	}
 }
 

@@ -99,16 +99,29 @@ done
 
 echo -e "${GREEN}Using metrics port ${METRICS_PORT}.${NC}"
 
+read -p "Enter port for Dashboard [5174]: " INPUT_DASHBOARD_PORT
+DASHBOARD_PORT=${INPUT_DASHBOARD_PORT:-5174}
+
+while ! check_port "$DASHBOARD_PORT"; do
+  echo -e "${RED}Port ${DASHBOARD_PORT} is currently in use.${NC}"
+  read -p "Enter a different dashboard port: " DASHBOARD_PORT
+done
+
+echo -e "${GREEN}Using dashboard port ${DASHBOARD_PORT}.${NC}"
+
 # Default automated config setup
 APP_ID=$(cat /dev/urandom | tr -dc '0-9' | fold -w 6 | head -n 1)
 RANDOM_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
 RANDOM_SECRET=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
 APP_KEY=${RANDOM_KEY}
 APP_SECRET=${RANDOM_SECRET}
+ADMIN_TOKEN=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
 
 cat << YAMLEOF > config.yaml.install.tmp
 port: "${PORT}"
 metrics_port: "${METRICS_PORT}"
+dashboard_port: "${DASHBOARD_PORT}"
+admin_token: "${ADMIN_TOKEN}"
 apps:
   - app_id: "${APP_ID}"
     app_key: "${APP_KEY}"

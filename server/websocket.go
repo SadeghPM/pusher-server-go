@@ -126,6 +126,8 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey 
 	establishedPayload := fmt.Sprintf(`{"event":"pusher:connection_established","data":"{\"socket_id\":\"%s\",\"activity_timeout\":%d}"}`, socketID, int(pongWait.Seconds()))
 	client.Send <- []byte(establishedPayload)
 
+	s.GlobalHub.DebugNotify(appCfg.AppID, "connection", socketID, "", "", "")
+
 	go s.writePump(client)
 	go s.readPump(client, appKey)
 }
@@ -141,6 +143,9 @@ func (s *Server) readPump(client *core.Client, appKey string) {
 	defer func() {
 		client.AppHub.UnregisterClient(client)
 		client.Conn.Close()
+
+		s.GlobalHub.DebugNotify(client.AppHub.AppID, "disconnection", client.SocketID, "", "", "")
+
 		cfg := s.ConfigManager.GetConfig()
 		if cfg != nil && cfg.Debug {
 			slog.Debug("Client disconnected",
@@ -298,6 +303,7 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appKey 
 		// Confirm subscription for public/private
 		successPayload := fmt.Sprintf(`{"event":"pusher_internal:subscription_succeeded","channel":"%s","data":"{}"}`, subData.Channel)
 		client.Send <- []byte(successPayload)
+		s.GlobalHub.DebugNotify(client.AppHub.AppID, "subscription", client.SocketID, subData.Channel, "", "")
 	}
 }
 
@@ -349,6 +355,8 @@ func (s *Server) handlePresenceSubscriptionSuccess(client *core.Client, channel 
 
 	successPayload := fmt.Sprintf(`{"event":"pusher_internal:subscription_succeeded","channel":"%s","data":%s}`, channel, safeDataStringBytes)
 	client.Send <- []byte(successPayload)
+
+	s.GlobalHub.DebugNotify(client.AppHub.AppID, "subscription", client.SocketID, channel, "", "")
 
 	if isNewUser && member != nil {
 		userInfoStr := "{}"
@@ -424,6 +432,8 @@ func (s *Server) handleClientEvent(client *core.Client, event PusherEvent, debug
 				})
 
 				if isSubscribed {
+					s.GlobalHub.DebugNotify(client.AppHub.AppID, "client_event", client.SocketID, channelName, event.Event, string(event.Data))
+
 					if debug {
 						slog.Debug("Client event triggered",
 							"app_id", client.AppHub.AppID,
