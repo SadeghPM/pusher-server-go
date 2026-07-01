@@ -18,10 +18,12 @@ type AppConfig struct {
 }
 
 type Config struct {
-	Port        string      `yaml:"port"`
-	MetricsPort string      `yaml:"metrics_port"`
-	Debug       bool        `yaml:"debug"`
-	Apps        []AppConfig `yaml:"apps"`
+	Port          string      `yaml:"port"`
+	MetricsPort   string      `yaml:"metrics_port"`
+	DashboardPort string      `yaml:"dashboard_port"`
+	AdminToken    string      `yaml:"admin_token"`
+	Debug         bool        `yaml:"debug"`
+	Apps          []AppConfig `yaml:"apps"`
 }
 
 type Manager struct {
@@ -75,6 +77,9 @@ func (m *Manager) Reload() error {
 	}
 	if cfg.MetricsPort == "" {
 		cfg.MetricsPort = "9601"
+	}
+	if cfg.DashboardPort == "" {
+		cfg.DashboardPort = "5174"
 	}
 
 	m.mu.Lock()
