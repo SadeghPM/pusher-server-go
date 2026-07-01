@@ -1,5 +1,7 @@
 port: "6001"
 metrics_port: "9601"
+dashboard_port: "5174"
+admin_token: "my-super-secret-admin-token"
 debug: false
 apps:
   - app_id: "my-app-id-1"

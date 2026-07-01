@@ -102,6 +102,10 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 
 	metrics.RestAPIEventsTotal.WithLabelValues(appID).Inc()
 
+	for _, channel := range channels {
+		a.GlobalHub.DebugNotify(appID, "api_message", payload.SocketID, channel, payload.Name, payload.Data)
+	}
+
 	// Respond with success
 	cfg := a.ConfigManager.GetConfig()
 	if cfg != nil && cfg.Debug {

@@ -10,6 +10,7 @@ import (
 	"pusher-clone/api"
 	"pusher-clone/config"
 	"pusher-clone/core"
+	"pusher-clone/dashboard"
 	"pusher-clone/server"
 	"pusher-clone/webhook"
 
@@ -80,6 +81,22 @@ func main() {
 
 	webhookDispatcher := webhook.NewDispatcher(manager)
 	globalHub := core.NewGlobalHub(webhookDispatcher)
+
+	// Setup Debug Observer
+	debugObserver := dashboard.NewObserver()
+	globalHub.DebugNotify = func(appID, eventType, socketID, channel, event, data string) {
+		debugObserver.Notify(dashboard.DebugEvent{
+			AppID:    appID,
+			Type:     eventType,
+			SocketID: socketID,
+			Channel:  channel,
+			Event:    event,
+			Data:     data,
+		})
+	}
+
+	dashServer := dashboard.NewServer(debugObserver, manager, globalHub)
+	go dashServer.Start()
 
 	wsServer := server.NewServer(globalHub, manager)
 	restAPI := api.NewAPI(globalHub, manager)
