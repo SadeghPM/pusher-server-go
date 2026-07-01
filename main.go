@@ -94,6 +94,7 @@ func main() {
 			Data:     data,
 		})
 	}
+	webhookDispatcher.DebugNotify = globalHub.DebugNotify
 
 	dashServer := dashboard.NewServer(debugObserver, manager, globalHub)
 	go dashServer.Start()

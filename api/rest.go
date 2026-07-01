@@ -69,6 +69,7 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 	// 1. Authenticate request using HMAC SHA256
 	if err := authenticateRequest(r, body, appCfg); err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
+		a.GlobalHub.DebugNotify(appID, "auth_error", "", "", "REST API Auth Failed", err.Error())
 		return
 	}
 
@@ -76,6 +77,7 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 	var payload TriggerPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		a.GlobalHub.DebugNotify(appID, "api_error", "", "", "REST API Invalid JSON", err.Error())
 		return
 	}
 
@@ -107,14 +109,11 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 	}
 
 	// Respond with success
-	cfg := a.ConfigManager.GetConfig()
-	if cfg != nil && cfg.Debug {
-		slog.Debug("Broadcasted event via REST API",
-			"app_id", appID,
-			"event", payload.Name,
-			"channels", channels,
-		)
-	}
+	slog.Info("Broadcasted event via REST API",
+		"app_id", appID,
+		"event", payload.Name,
+		"channels", channels,
+	)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{}`))

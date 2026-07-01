@@ -674,6 +674,8 @@ body {
 .badge-subscription { background: #D1FAE5; color: #065F46; }
 .badge-api_message { background: #EDE9FE; color: #6D28D9; }
 .badge-client_event { background: #FEF3C7; color: #92400E; }
+.badge-error { background: var(--error-bg); color: var(--error); border: 1px solid var(--error-border); }
+.badge-webhook { background: #E0F2FE; color: #0369A1; }
 .badge-default { background: var(--bg-hover); color: var(--text-secondary); }
 
 /* ============================================================

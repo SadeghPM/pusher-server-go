@@ -105,6 +105,7 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Error("WebSocket upgrade failed", "error", err)
+		s.GlobalHub.DebugNotify(appCfg.AppID, "connection_error", "", "", "WebSocket upgrade failed", err.Error())
 		return
 	}
 
@@ -172,6 +173,7 @@ func (s *Server) readPump(client *core.Client, appKey string) {
 					"socket_id", client.SocketID,
 				)
 				metrics.WebsocketErrorsTotal.WithLabelValues(client.AppHub.AppID, "read").Inc()
+				s.GlobalHub.DebugNotify(client.AppHub.AppID, "connection_error", client.SocketID, "", "WebSocket read error", err.Error())
 			}
 			break
 		}
@@ -326,6 +328,7 @@ func (s *Server) verifySubscriptionSignature(client *core.Client, subData Pusher
 			"expected", expectedSig,
 			"got", subData.Auth,
 		)
+		s.GlobalHub.DebugNotify(client.AppHub.AppID, "auth_error", client.SocketID, subData.Channel, "Invalid signature", fmt.Sprintf("Expected: %s, Got: %s", expectedSig, subData.Auth))
 
 		errorPayload := fmt.Sprintf(`{"event":"pusher:error","data":"{\"message\":\"Invalid signature: Expected HMAC SHA256 hex digest of %s:%s, but got %s\",\"code\":null}"}`, client.SocketID, subData.Channel, subData.Auth)
 		client.Send <- []byte(errorPayload)
@@ -472,6 +475,7 @@ func (s *Server) handleMessage(client *core.Client, message []byte, appKey strin
 			"app_id", client.AppHub.AppID,
 			"socket_id", client.SocketID,
 		)
+		s.GlobalHub.DebugNotify(client.AppHub.AppID, "connection_error", client.SocketID, "", "Invalid JSON received", err.Error())
 		return
 	}
 
