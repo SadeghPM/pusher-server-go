@@ -168,6 +168,7 @@ document.addEventListener('DOMContentLoaded', () => {
     toggleCreator.addEventListener('click', () => {
         const isHidden = creatorBody.style.display === 'none';
         creatorBody.style.display = isHidden ? 'block' : 'none';
+        document.getElementById('toggle-icon').textContent = isHidden ? '▲' : '▼';
     });
 
     btnSendEvent.addEventListener('click', async () => {

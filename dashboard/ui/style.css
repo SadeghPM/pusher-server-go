@@ -48,7 +48,7 @@ body {
     display: flex; align-items: center; justify-content: space-between; padding: 0 20px;
 }
 .header .logo { font-weight: bold; font-size: 18px; color: var(--primary-color); }
-.header-nav { display: flex; align-items: center; gap: 10px; }
+.header-nav { display: flex; align-items: center; justify-content: space-between; }
 .header-nav select { padding: 6px; border: 1px solid var(--border-color); border-radius: 4px; }
 .header-nav button { padding: 6px 12px; background: transparent; border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer; }
 
