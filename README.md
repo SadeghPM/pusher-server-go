@@ -4,6 +4,7 @@ A lightweight, in-memory, multi-tenant Pusher alternative written in Go, specifi
 
 ## Features
 
+- Real-time Admin Dashboard & Debug Console
 - Fully compatible with Pusher Protocol v7
 - Built-in Prometheus metrics exporter (`/metrics` endpoint)
 - Multi-tenant: Support multiple Laravel applications with a single server instance
@@ -36,6 +37,8 @@ To enhance security, you should configure the `allowed_origins` list for each ap
 ```yaml
 port: "6001"
 metrics_port: "9601"
+dashboard_port: "5174"
+admin_token: "my-super-secret-admin-token"
 debug: false
 apps:
   - app_id: "my-app-id-1"
@@ -51,6 +54,10 @@ go run main.go
 ```
 
 The server will start on the port specified in your `config.yaml` file (default: 6001).
+
+## Admin Dashboard
+
+The server includes a real-time admin dashboard with a debug console and event creator, accessible by default on port `5174`. It is secured using an `admin_token` configured in `config.yaml`.
 
 ## Observability & Metrics
 
