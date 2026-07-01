@@ -126,6 +126,8 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey 
 	establishedPayload := fmt.Sprintf(`{"event":"pusher:connection_established","data":"{\"socket_id\":\"%s\",\"activity_timeout\":%d}"}`, socketID, int(pongWait.Seconds()))
 	client.Send <- []byte(establishedPayload)
 
+	s.GlobalHub.DebugNotify(appCfg.AppID, "connection", socketID, "", "", "")
+
 	go s.writePump(client)
 	go s.readPump(client, appKey)
 }
@@ -141,6 +143,9 @@ func (s *Server) readPump(client *core.Client, appKey string) {
 	defer func() {
 		client.AppHub.UnregisterClient(client)
 		client.Conn.Close()
+
+		s.GlobalHub.DebugNotify(client.AppHub.AppID, "disconnection", client.SocketID, "", "", "")
+
 		cfg := s.ConfigManager.GetConfig()
 		if cfg != nil && cfg.Debug {
 			slog.Debug("Client disconnected",
