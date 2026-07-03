@@ -15,3 +15,6 @@ type WebhookDispatcher interface {
 type NoopWebhookDispatcher struct{}
 
 func (d *NoopWebhookDispatcher) Dispatch(appID string, events []WebhookEvent) {}
+
+// Compile-time interface check.
+var _ WebhookDispatcher = (*NoopWebhookDispatcher)(nil)

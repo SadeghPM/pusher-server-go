@@ -15,28 +15,34 @@ import (
 	"pusher-clone/core"
 )
 
+var _ core.WebhookDispatcher = (*Dispatcher)(nil)
+
 type WebhookPayload struct {
 	TimeMs int64               `json:"time_ms"`
 	Events []core.WebhookEvent `json:"events"`
 }
 
 type Dispatcher struct {
-	ConfigManager *config.Manager
+	configManager *config.Manager
 	client        *http.Client
-	DebugNotify   func(appID, eventType, socketID, channel, event, data string)
+	Debugger      core.DebugNotifier
 }
 
-func NewDispatcher(manager *config.Manager) *Dispatcher {
+func NewDispatcher(manager *config.Manager, debugger core.DebugNotifier) *Dispatcher {
+	if debugger == nil {
+		debugger = core.NoopDebugNotifier{}
+	}
 	return &Dispatcher{
-		ConfigManager: manager,
+		configManager: manager,
 		client: &http.Client{
 			Timeout: 5 * time.Second,
 		},
+		Debugger: debugger,
 	}
 }
 
 func (d *Dispatcher) Dispatch(appID string, events []core.WebhookEvent) {
-	appCfg := d.ConfigManager.GetAppByID(appID)
+	appCfg := d.configManager.GetAppByID(appID)
 	if appCfg == nil || len(appCfg.Webhooks) == 0 {
 		return
 	}
@@ -53,9 +59,7 @@ func (d *Dispatcher) Dispatch(appID string, events []core.WebhookEvent) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		slog.Error("Failed to marshal webhook payload", "error", err, "app_id", appID)
-		if d.DebugNotify != nil {
-			d.DebugNotify(appID, "webhook_error", "", "", "Failed to marshal webhook payload", err.Error())
-		}
+		d.Debugger.Notify(appID, "webhook_error", "", "", "Failed to marshal webhook payload", err.Error())
 		return
 	}
 
@@ -70,9 +74,7 @@ func (d *Dispatcher) sendWebhook(url string, body []byte, appKey, signature, app
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(body))
 	if err != nil {
 		slog.Error("Failed to create webhook request", "error", err, "url", url, "app_id", appID)
-		if d.DebugNotify != nil {
-			d.DebugNotify(appID, "webhook_error", "", "", "Failed to create webhook request", fmt.Sprintf("URL: %s, Error: %s", url, err.Error()))
-		}
+		d.Debugger.Notify(appID, "webhook_error", "", "", "Failed to create webhook request", fmt.Sprintf("URL: %s, Error: %s", url, err.Error()))
 		return
 	}
 
@@ -83,22 +85,16 @@ func (d *Dispatcher) sendWebhook(url string, body []byte, appKey, signature, app
 	resp, err := d.client.Do(req)
 	if err != nil {
 		slog.Error("Failed to send webhook", "error", err, "url", url, "app_id", appID)
-		if d.DebugNotify != nil {
-			d.DebugNotify(appID, "webhook_error", "", "", "Failed to send webhook", fmt.Sprintf("URL: %s, Error: %s", url, err.Error()))
-		}
+		d.Debugger.Notify(appID, "webhook_error", "", "", "Failed to send webhook", fmt.Sprintf("URL: %s, Error: %s", url, err.Error()))
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		slog.Error("Webhook failed with non-2xx status", "status", resp.StatusCode, "url", url, "app_id", appID)
-		if d.DebugNotify != nil {
-			d.DebugNotify(appID, "webhook_error", "", "", "Webhook failed with non-2xx status", fmt.Sprintf("URL: %s, Status: %d", url, resp.StatusCode))
-		}
+		d.Debugger.Notify(appID, "webhook_error", "", "", "Webhook failed with non-2xx status", fmt.Sprintf("URL: %s, Status: %d", url, resp.StatusCode))
 	} else {
-		if d.DebugNotify != nil {
-			d.DebugNotify(appID, "webhook_success", "", "", "Webhook sent successfully", fmt.Sprintf("URL: %s, Status: %d", url, resp.StatusCode))
-		}
+		d.Debugger.Notify(appID, "webhook_success", "", "", "Webhook sent successfully", fmt.Sprintf("URL: %s, Status: %d", url, resp.StatusCode))
 	}
 }
 

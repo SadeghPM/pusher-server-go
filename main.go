@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"pusher-clone/api"
 	"pusher-clone/config"
@@ -19,6 +23,10 @@ import (
 )
 
 func main() {
+	// Root context cancelled on SIGINT/SIGTERM for graceful shutdown.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	manager, err := config.NewManager("config.yaml")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
@@ -54,6 +62,8 @@ func main() {
 
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case event, ok := <-watcher.Events:
 				if !ok {
 					return
@@ -79,25 +89,15 @@ func main() {
 		}
 	}()
 
-	webhookDispatcher := webhook.NewDispatcher(manager)
-	globalHub := core.NewGlobalHub(webhookDispatcher)
-
-	// Setup Debug Observer
+	// Setup Debug Observer and NotifierAdapter
 	debugObserver := dashboard.NewObserver()
-	globalHub.DebugNotify = func(appID, eventType, socketID, channel, event, data string) {
-		debugObserver.Notify(dashboard.DebugEvent{
-			AppID:    appID,
-			Type:     eventType,
-			SocketID: socketID,
-			Channel:  channel,
-			Event:    event,
-			Data:     data,
-		})
-	}
-	webhookDispatcher.DebugNotify = globalHub.DebugNotify
+	notifier := dashboard.NewNotifierAdapter(debugObserver)
+
+	webhookDispatcher := webhook.NewDispatcher(manager, notifier)
+	globalHub := core.NewGlobalHub(webhookDispatcher, notifier)
 
 	dashServer := dashboard.NewServer(debugObserver, manager, globalHub)
-	go dashServer.Start()
+	go dashServer.Start(ctx)
 
 	wsServer := server.NewServer(globalHub, manager)
 	restAPI := api.NewAPI(globalHub, manager)
@@ -132,12 +132,19 @@ func main() {
 	})
 
 	// Start Prometheus metrics server on a separate port
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+	metricsAddr := fmt.Sprintf(":%s", cfg.MetricsPort)
+	slog.Info("Starting Prometheus metrics server", "addr", metricsAddr)
+
+	metricsSrv := &http.Server{
+		Addr:         metricsAddr,
+		Handler:      metricsMux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
 	go func() {
-		metricsMux := http.NewServeMux()
-		metricsMux.Handle("/metrics", promhttp.Handler())
-		metricsAddr := fmt.Sprintf(":%s", cfg.MetricsPort)
-		slog.Info("Starting Prometheus metrics server", "addr", metricsAddr)
-		if err := http.ListenAndServe(metricsAddr, metricsMux); err != nil {
+		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("Metrics ListenAndServe failed", "error", err)
 		}
 	}()
@@ -145,8 +152,36 @@ func main() {
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	slog.Info("Starting Multi-Tenant Pusher clone server", "addr", addr)
 
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		slog.Error("ListenAndServe failed", "error", err)
-		os.Exit(1)
+	mainSrv := &http.Server{
+		Addr:         addr,
+		Handler:      mux,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
+	go func() {
+		if err := mainSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("ListenAndServe failed", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Block until shutdown signal
+	<-ctx.Done()
+	slog.Info("Shutting down servers...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := mainSrv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("Main server shutdown error", "error", err)
+	}
+	if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("Metrics server shutdown error", "error", err)
+	}
+
+	// Close all AppHub work queues
+	globalHub.Close()
+
+	slog.Info("All servers stopped gracefully")
 }

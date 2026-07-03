@@ -20,62 +20,47 @@ import (
 )
 
 const (
-	// Time allowed to write a message to the peer.
-	writeWait = 10 * time.Second
-
-	// Time allowed to read the next pong message from the peer.
-	pongWait = 120 * time.Second
-
-	// Send pings to peer with this period. Must be less than pongWait.
-	pingPeriod = 60 * time.Second
-
-	// Maximum message size allowed from peer.
+	writeWait      = 10 * time.Second
+	pongWait       = 120 * time.Second
+	pingPeriod     = 60 * time.Second
 	maxMessageSize = 8192
 )
 
-// PusherEvent standard protocol event wrapper
 type PusherEvent struct {
 	Event   string          `json:"event"`
 	Channel string          `json:"channel,omitempty"`
-	Data    json.RawMessage `json:"data"` // Kept as raw so we can extract JSON payload or string
+	Data    json.RawMessage `json:"data"`
 }
 
-// PusherSubscribeData payload for subscribe event
 type PusherSubscribeData struct {
 	Channel     string `json:"channel"`
 	Auth        string `json:"auth,omitempty"`
 	ChannelData string `json:"channel_data,omitempty"`
 }
 
-// PusherUnsubscribeData payload for unsubscribe event
 type PusherUnsubscribeData struct {
 	Channel string `json:"channel"`
 }
 
-// ChannelData represents the decoded channel_data for presence channels
 type ChannelData struct {
 	UserID   string          `json:"user_id"`
 	UserInfo json.RawMessage `json:"user_info,omitempty"`
 }
 
 type Server struct {
-	GlobalHub     *core.GlobalHub
-	ConfigManager *config.Manager
+	globalHub     *core.GlobalHub
+	configManager *config.Manager
 }
 
 func NewServer(globalHub *core.GlobalHub, manager *config.Manager) *Server {
 	return &Server{
-		GlobalHub:     globalHub,
-		ConfigManager: manager,
+		globalHub:     globalHub,
+		configManager: manager,
 	}
 }
 
-// Handler generation per AppKey is not strictly necessary if we parse it from the URL
-// But we registered explicitly in main.go before. We will extract appKey from the path now in main.go
-// so we need a unified handler that takes the appKey.
 func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey string) {
-	// Find the matching AppConfig
-	appCfg := s.ConfigManager.GetAppByKey(appKey)
+	appCfg := s.configManager.GetAppByKey(appKey)
 
 	if appCfg == nil {
 		http.Error(w, "App not found", http.StatusNotFound)
@@ -88,10 +73,10 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey 
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
 			if origin == "" {
-				return true // Allow requests without Origin header (e.g., direct WS clients like mobile apps)
+				return true
 			}
 			if len(appCfg.AllowedOrigins) == 0 {
-				return true // If not configured, allow all
+				return true
 			}
 			for _, allowed := range appCfg.AllowedOrigins {
 				if allowed == "*" || allowed == origin {
@@ -105,17 +90,17 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Error("WebSocket upgrade failed", "error", err)
-		s.GlobalHub.DebugNotify(appCfg.AppID, "connection_error", "", "", "WebSocket upgrade failed", err.Error())
+		s.globalHub.Debugger.Notify(appCfg.AppID, "connection_error", "", "", "WebSocket upgrade failed", err.Error())
 		return
 	}
 
-	appHub := s.GlobalHub.GetOrCreateAppHub(appCfg.AppID)
+	appHub := s.globalHub.GetOrCreateAppHub(appCfg.AppID)
 	socketID := generateSocketID()
 
 	client := core.NewClient(appHub, conn, socketID)
 	appHub.RegisterClient(client)
 
-	cfg := s.ConfigManager.GetConfig()
+	cfg := s.configManager.GetConfig()
 	if cfg != nil && cfg.Debug {
 		slog.Debug("Client connected",
 			"app_id", appCfg.AppID,
@@ -123,20 +108,19 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey 
 		)
 	}
 
-	// Send connection established event
 	establishedPayload := fmt.Sprintf(`{"event":"pusher:connection_established","data":"{\"socket_id\":\"%s\",\"activity_timeout\":%d}"}`, socketID, int(pongWait.Seconds()))
 	client.Send <- []byte(establishedPayload)
 
-	s.GlobalHub.DebugNotify(appCfg.AppID, "connection", socketID, "", "", "")
+	s.globalHub.Debugger.Notify(appCfg.AppID, "connection", socketID, "", "", "")
 
 	go s.writePump(client)
 	go s.readPump(client, appKey)
 }
 
-var socketIDCounter uint32
+var socketIDCounter uint64
 
 func generateSocketID() string {
-	counter := atomic.AddUint32(&socketIDCounter, 1)
+	counter := atomic.AddUint64(&socketIDCounter, 1)
 	return fmt.Sprintf("%d.%d", time.Now().Unix(), counter)
 }
 
@@ -145,12 +129,12 @@ func (s *Server) readPump(client *core.Client, appKey string) {
 		client.AppHub.UnregisterClient(client)
 		client.Conn.Close()
 
-		s.GlobalHub.DebugNotify(client.AppHub.AppID, "disconnection", client.SocketID, "", "", "")
+		s.globalHub.Debugger.Notify(client.AppHub.AppID(), "disconnection", client.SocketID, "", "", "")
 
-		cfg := s.ConfigManager.GetConfig()
+		cfg := s.configManager.GetConfig()
 		if cfg != nil && cfg.Debug {
 			slog.Debug("Client disconnected",
-				"app_id", client.AppHub.AppID,
+				"app_id", client.AppHub.AppID(),
 				"socket_id", client.SocketID,
 			)
 		}
@@ -169,11 +153,11 @@ func (s *Server) readPump(client *core.Client, appKey string) {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				slog.Error("WebSocket read error",
 					"error", err,
-					"app_id", client.AppHub.AppID,
+					"app_id", client.AppHub.AppID(),
 					"socket_id", client.SocketID,
 				)
-				metrics.WebsocketErrorsTotal.WithLabelValues(client.AppHub.AppID, "read").Inc()
-				s.GlobalHub.DebugNotify(client.AppHub.AppID, "connection_error", client.SocketID, "", "WebSocket read error", err.Error())
+				metrics.WebsocketErrorsTotal.WithLabelValues(client.AppHub.AppID(), "read").Inc()
+				s.globalHub.Debugger.Notify(client.AppHub.AppID(), "connection_error", client.SocketID, "", "WebSocket read error", err.Error())
 			}
 			break
 		}
@@ -199,22 +183,21 @@ func (s *Server) writePump(client *core.Client) {
 			}
 
 			if err := client.Conn.WriteMessage(websocket.TextMessage, message); err != nil {
-				metrics.WebsocketErrorsTotal.WithLabelValues(client.AppHub.AppID, "write").Inc()
+				metrics.WebsocketErrorsTotal.WithLabelValues(client.AppHub.AppID(), "write").Inc()
 				return
 			}
 
-			// Send queued chat messages as separate websocket messages.
 			n := len(client.Send)
 			for i := 0; i < n; i++ {
 				if err := client.Conn.WriteMessage(websocket.TextMessage, <-client.Send); err != nil {
-					metrics.WebsocketErrorsTotal.WithLabelValues(client.AppHub.AppID, "write").Inc()
+					metrics.WebsocketErrorsTotal.WithLabelValues(client.AppHub.AppID(), "write").Inc()
 					return
 				}
 			}
 		case <-ticker.C:
 			client.Conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := client.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				metrics.WebsocketErrorsTotal.WithLabelValues(client.AppHub.AppID, "ping").Inc()
+				metrics.WebsocketErrorsTotal.WithLabelValues(client.AppHub.AppID(), "ping").Inc()
 				return
 			}
 		}
@@ -224,7 +207,7 @@ func (s *Server) writePump(client *core.Client) {
 func (s *Server) handlePing(client *core.Client, debug bool) {
 	if debug {
 		slog.Debug("Ping received",
-			"app_id", client.AppHub.AppID,
+			"app_id", client.AppHub.AppID(),
 			"socket_id", client.SocketID,
 			"event", "pusher:ping",
 		)
@@ -233,9 +216,9 @@ func (s *Server) handlePing(client *core.Client, debug bool) {
 }
 
 func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appKey string) {
-	cfg := s.ConfigManager.GetConfig()
+	cfg := s.configManager.GetConfig()
 	debug := cfg != nil && cfg.Debug
-	appCfg := s.ConfigManager.GetAppByKey(appKey)
+	appCfg := s.configManager.GetAppByKey(appKey)
 	if appCfg == nil {
 		return
 	}
@@ -243,13 +226,11 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appKey 
 
 	var subData PusherSubscribeData
 
-	// Try unmarshaling string first
 	var dataStr string
 	err := json.Unmarshal(event.Data, &dataStr)
 	if err == nil {
 		json.Unmarshal([]byte(dataStr), &subData)
 	} else {
-		// If not a string, try direct object
 		json.Unmarshal(event.Data, &subData)
 	}
 
@@ -283,7 +264,7 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appKey 
 	if debug {
 		if isPresence && member != nil {
 			slog.Debug("User subscribed to presence channel",
-				"app_id", client.AppHub.AppID,
+				"app_id", client.AppHub.AppID(),
 				"channel", subData.Channel,
 				"socket_id", client.SocketID,
 				"event", "pusher:subscribe",
@@ -291,7 +272,7 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appKey 
 			)
 		} else {
 			slog.Debug("Client subscribed to channel",
-				"app_id", client.AppHub.AppID,
+				"app_id", client.AppHub.AppID(),
 				"channel", subData.Channel,
 				"socket_id", client.SocketID,
 				"event", "pusher:subscribe",
@@ -302,33 +283,29 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appKey 
 	if isPresence {
 		s.handlePresenceSubscriptionSuccess(client, subData.Channel, member, isNewUser)
 	} else {
-		// Confirm subscription for public/private
 		successPayload := fmt.Sprintf(`{"event":"pusher_internal:subscription_succeeded","channel":"%s","data":"{}"}`, subData.Channel)
 		client.Send <- []byte(successPayload)
-		s.GlobalHub.DebugNotify(client.AppHub.AppID, "subscription", client.SocketID, subData.Channel, "", "")
+		s.globalHub.Debugger.Notify(client.AppHub.AppID(), "subscription", client.SocketID, subData.Channel, "", "")
 	}
 }
 
 func (s *Server) verifySubscriptionSignature(client *core.Client, subData PusherSubscribeData, appSecret, appKey string, isPresence bool) bool {
-	// Verify signature
-	// Format: socket_id:channel_name
 	toSign := fmt.Sprintf("%s:%s", client.SocketID, subData.Channel)
 	if isPresence {
 		toSign = fmt.Sprintf("%s:%s:%s", client.SocketID, subData.Channel, subData.ChannelData)
 	}
 	expectedSig := generateSignature(appSecret, toSign)
 
-	// Auth string format is app_key:signature
 	authParts := strings.Split(subData.Auth, ":")
-	if len(authParts) != 2 || authParts[0] != appKey || authParts[1] != expectedSig {
+	if len(authParts) != 2 || authParts[0] != appKey || !hmac.Equal([]byte(authParts[1]), []byte(expectedSig)) {
 		slog.Error("Invalid signature",
-			"app_id", client.AppHub.AppID,
+			"app_id", client.AppHub.AppID(),
 			"channel", subData.Channel,
 			"socket_id", client.SocketID,
 			"expected", expectedSig,
 			"got", subData.Auth,
 		)
-		s.GlobalHub.DebugNotify(client.AppHub.AppID, "auth_error", client.SocketID, subData.Channel, "Invalid signature", fmt.Sprintf("Expected: %s, Got: %s", expectedSig, subData.Auth))
+		s.globalHub.Debugger.Notify(client.AppHub.AppID(), "auth_error", client.SocketID, subData.Channel, "Invalid signature", fmt.Sprintf("Expected: %s, Got: %s", expectedSig, subData.Auth))
 
 		errorPayload := fmt.Sprintf(`{"event":"pusher:error","data":"{\"message\":\"Invalid signature: Expected HMAC SHA256 hex digest of %s:%s, but got %s\",\"code\":null}"}`, client.SocketID, subData.Channel, subData.Auth)
 		client.Send <- []byte(errorPayload)
@@ -359,7 +336,7 @@ func (s *Server) handlePresenceSubscriptionSuccess(client *core.Client, channel 
 	successPayload := fmt.Sprintf(`{"event":"pusher_internal:subscription_succeeded","channel":"%s","data":%s}`, channel, safeDataStringBytes)
 	client.Send <- []byte(successPayload)
 
-	s.GlobalHub.DebugNotify(client.AppHub.AppID, "subscription", client.SocketID, channel, "", "")
+	s.globalHub.Debugger.Notify(client.AppHub.AppID(), "subscription", client.SocketID, channel, "", "")
 
 	if isNewUser && member != nil {
 		userInfoStr := "{}"
@@ -373,7 +350,7 @@ func (s *Server) handlePresenceSubscriptionSuccess(client *core.Client, channel 
 		memberAddedPayload := fmt.Sprintf(`{"event":"pusher_internal:member_added","channel":"%s","data":%s}`, channel, safeMemberDataBytes)
 		client.AppHub.BroadcastToChannel(channel, []byte(memberAddedPayload), client.SocketID)
 
-		go client.AppHub.Dispatcher.Dispatch(client.AppHub.AppID, []core.WebhookEvent{
+		go client.AppHub.DispatchWebhook([]core.WebhookEvent{
 			{
 				Name:    "member_added",
 				Channel: channel,
@@ -398,7 +375,7 @@ func (s *Server) handleUnsubscribe(client *core.Client, event PusherEvent, debug
 		client.AppHub.Unsubscribe(client, unsubData.Channel)
 		if debug {
 			slog.Debug("Client unsubscribed from channel",
-				"app_id", client.AppHub.AppID,
+				"app_id", client.AppHub.AppID(),
 				"channel", unsubData.Channel,
 				"socket_id", client.SocketID,
 				"event", "pusher:unsubscribe",
@@ -409,19 +386,13 @@ func (s *Server) handleUnsubscribe(client *core.Client, event PusherEvent, debug
 
 func (s *Server) handleClientEvent(client *core.Client, event PusherEvent, debug bool) {
 	if strings.HasPrefix(event.Event, "client-") {
-		// Find the channel from the event (the wrapper PusherEvent already extracts it for client events usually)
-		// But for double encoding sometimes it's just event.Channel
 		channelName := event.Channel
-
-		// If not extracted, try parsing the channel out manually if it was somehow nested differently,
-		// but Pusher standard places `channel` alongside `event` and `data` in the JSON structure.
 
 		if channelName != "" {
 			isPrivate := strings.HasPrefix(channelName, "private-")
 			isPresence := strings.HasPrefix(channelName, "presence-")
 
 			if isPrivate || isPresence {
-				// Verify client is subscribed to this channel
 				isSubscribed := false
 				var member *core.ChannelMember
 
@@ -435,23 +406,19 @@ func (s *Server) handleClientEvent(client *core.Client, event PusherEvent, debug
 				})
 
 				if isSubscribed {
-					s.GlobalHub.DebugNotify(client.AppHub.AppID, "client_event", client.SocketID, channelName, event.Event, string(event.Data))
+					s.globalHub.Debugger.Notify(client.AppHub.AppID(), "client_event", client.SocketID, channelName, event.Event, string(event.Data))
 
 					if debug {
 						slog.Debug("Client event triggered",
-							"app_id", client.AppHub.AppID,
+							"app_id", client.AppHub.AppID(),
 							"channel", channelName,
 							"socket_id", client.SocketID,
 							"event", event.Event,
 						)
 					}
-					// Double encoding: standard Pusher channels protocol requires stringified JSON.
-					// Wait, client events format: {"event": "client-...", "channel": "presence-...", "data": ...}
 
 					dataStr := string(event.Data)
 					if isPresence && member != nil {
-						// Append user_id to the event for presence channels
-						// To do this we serialize it properly
 						payload := fmt.Sprintf(`{"event":"%s","channel":"%s","data":%s,"user_id":"%s"}`, event.Event, channelName, dataStr, member.UserID)
 						client.AppHub.BroadcastToChannel(channelName, []byte(payload), client.SocketID)
 					} else {
@@ -465,17 +432,17 @@ func (s *Server) handleClientEvent(client *core.Client, event PusherEvent, debug
 }
 
 func (s *Server) handleMessage(client *core.Client, message []byte, appKey string) {
-	cfg := s.ConfigManager.GetConfig()
+	cfg := s.configManager.GetConfig()
 	debug := cfg != nil && cfg.Debug
 
 	var event PusherEvent
 	if err := json.Unmarshal(message, &event); err != nil {
 		slog.Error("Invalid JSON received",
 			"error", err,
-			"app_id", client.AppHub.AppID,
+			"app_id", client.AppHub.AppID(),
 			"socket_id", client.SocketID,
 		)
-		s.GlobalHub.DebugNotify(client.AppHub.AppID, "connection_error", client.SocketID, "", "Invalid JSON received", err.Error())
+		s.globalHub.Debugger.Notify(client.AppHub.AppID(), "connection_error", client.SocketID, "", "Invalid JSON received", err.Error())
 		return
 	}
 
