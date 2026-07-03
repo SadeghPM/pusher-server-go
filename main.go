@@ -102,6 +102,29 @@ func main() {
 	wsServer := server.NewServer(globalHub, manager)
 	restAPI := api.NewAPI(globalHub, manager)
 
+	mux := setupRouter(wsServer, restAPI)
+
+	// Start Prometheus metrics server on a separate port
+	go func() {
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle("/metrics", promhttp.Handler())
+		metricsAddr := fmt.Sprintf(":%s", cfg.MetricsPort)
+		slog.Info("Starting Prometheus metrics server", "addr", metricsAddr)
+		if err := http.ListenAndServe(metricsAddr, metricsMux); err != nil {
+			slog.Error("Metrics ListenAndServe failed", "error", err)
+		}
+	}()
+
+	addr := fmt.Sprintf(":%s", cfg.Port)
+	slog.Info("Starting Multi-Tenant Pusher clone server", "addr", addr)
+
+	if err := http.ListenAndServe(addr, mux); err != nil {
+		slog.Error("ListenAndServe failed", "error", err)
+		os.Exit(1)
+	}
+}
+
+func setupRouter(wsServer *server.Server, restAPI *api.API) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -131,22 +154,5 @@ func main() {
 		http.NotFound(w, r)
 	})
 
-	// Start Prometheus metrics server on a separate port
-	go func() {
-		metricsMux := http.NewServeMux()
-		metricsMux.Handle("/metrics", promhttp.Handler())
-		metricsAddr := fmt.Sprintf(":%s", cfg.MetricsPort)
-		slog.Info("Starting Prometheus metrics server", "addr", metricsAddr)
-		if err := http.ListenAndServe(metricsAddr, metricsMux); err != nil {
-			slog.Error("Metrics ListenAndServe failed", "error", err)
-		}
-	}()
-
-	addr := fmt.Sprintf(":%s", cfg.Port)
-	slog.Info("Starting Multi-Tenant Pusher clone server", "addr", addr)
-
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		slog.Error("ListenAndServe failed", "error", err)
-		os.Exit(1)
-	}
+	return mux
 }

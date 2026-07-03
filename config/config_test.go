@@ -510,4 +510,3 @@ func TestManager_UpdateApp_NotFound(t *testing.T) {
 		t.Fatal("Expected error for updating non-existent app, got nil")
 	}
 }
-
