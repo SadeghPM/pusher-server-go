@@ -10,14 +10,14 @@ func TestAppHubRegistration(t *testing.T) {
 
 	hub.RegisterClient(client)
 
-	if len(hub.Clients) != 1 {
-		t.Errorf("Expected 1 client, got %d", len(hub.Clients))
+	if len(hub.clients) != 1 {
+		t.Errorf("Expected 1 client, got %d", len(hub.clients))
 	}
 
 	hub.UnregisterClient(client)
 
-	if len(hub.Clients) != 0 {
-		t.Errorf("Expected 0 clients, got %d", len(hub.Clients))
+	if len(hub.clients) != 0 {
+		t.Errorf("Expected 0 clients, got %d", len(hub.clients))
 	}
 }
 
@@ -28,8 +28,8 @@ func TestAppHubSubscription(t *testing.T) {
 
 	hub.Subscribe(client, "my-channel", nil)
 
-	if len(hub.Channels["my-channel"]) != 1 {
-		t.Errorf("Expected 1 subscriber in channel, got %d", len(hub.Channels["my-channel"]))
+	if len(hub.channels["my-channel"]) != 1 {
+		t.Errorf("Expected 1 subscriber in channel, got %d", len(hub.channels["my-channel"]))
 	}
 }
 
@@ -41,18 +41,18 @@ func TestAppHubUnsubscribeNonExistentChannel(t *testing.T) {
 	// Attempt to unsubscribe from a channel that doesn't exist
 	hub.Unsubscribe(client, "non-existent-channel")
 
-	if len(hub.Channels) != 0 {
-		t.Errorf("Expected 0 channels, got %d", len(hub.Channels))
+	if len(hub.channels) != 0 {
+		t.Errorf("Expected 0 channels, got %d", len(hub.channels))
 	}
 }
 
 func TestGlobalHub(t *testing.T) {
-	global := NewGlobalHub(nil)
+	global := NewGlobalHub(nil, nil)
 
 	hub1 := global.GetOrCreateAppHub("app1")
 	hub2 := global.GetOrCreateAppHub("app2")
 
-	if hub1.AppID != "app1" || hub2.AppID != "app2" {
+	if hub1.AppID() != "app1" || hub2.AppID() != "app2" {
 		t.Errorf("GlobalHub created apps with wrong IDs")
 	}
 

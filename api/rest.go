@@ -18,14 +18,14 @@ import (
 )
 
 type API struct {
-	GlobalHub     *core.GlobalHub
-	ConfigManager *config.Manager
+	globalHub     *core.GlobalHub
+	configManager *config.Manager
 }
 
 func NewAPI(globalHub *core.GlobalHub, manager *config.Manager) *API {
 	return &API{
-		GlobalHub:     globalHub,
-		ConfigManager: manager,
+		globalHub:     globalHub,
+		configManager: manager,
 	}
 }
 
@@ -45,7 +45,7 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 	}
 
 	// Find App Config
-	appCfg := a.ConfigManager.GetAppByID(appID)
+	appCfg := a.configManager.GetAppByID(appID)
 
 	if appCfg == nil {
 		http.Error(w, "App not found", http.StatusNotFound)
@@ -54,6 +54,7 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 
 	// Limit request body to 1MB to prevent memory exhaustion DoS
 	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+	defer r.Body.Close()
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -64,12 +65,11 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
 
 	// 1. Authenticate request using HMAC SHA256
 	if err := authenticateRequest(r, body, appCfg); err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
-		a.GlobalHub.DebugNotify(appID, "auth_error", "", "", "REST API Auth Failed", err.Error())
+		a.globalHub.Debugger.Notify(appID, "auth_error", "", "", "REST API Auth Failed", err.Error())
 		return
 	}
 
@@ -77,7 +77,7 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 	var payload TriggerPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		a.GlobalHub.DebugNotify(appID, "api_error", "", "", "REST API Invalid JSON", err.Error())
+		a.globalHub.Debugger.Notify(appID, "api_error", "", "", "REST API Invalid JSON", err.Error())
 		return
 	}
 
@@ -88,24 +88,20 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 	}
 
 	// 3. Broadcast to WebSockets
-	appHub := a.GlobalHub.GetOrCreateAppHub(appID)
+	appHub := a.globalHub.GetOrCreateAppHub(appID)
 
 	// Construct the WebSocket event message
-	// Note: The data field in the REST payload is already a stringified JSON.
-	// We pass it directly into the "data" field of our websocket message.
-	escapedData, _ := json.Marshal(payload.Data) // Ensures proper string escaping if needed, but usually it's already a string.
+	escapedData, _ := json.Marshal(payload.Data)
 
 	for _, channel := range channels {
-		// If payload.Data is already stringified JSON, using string format directly works for Pusher clients
 		message := fmt.Sprintf(`{"event":"%s","channel":"%s","data":%s}`, payload.Name, channel, escapedData)
-
 		appHub.BroadcastToChannel(channel, []byte(message), payload.SocketID)
 	}
 
 	metrics.RestAPIEventsTotal.WithLabelValues(appID).Inc()
 
 	for _, channel := range channels {
-		a.GlobalHub.DebugNotify(appID, "api_message", payload.SocketID, channel, payload.Name, payload.Data)
+		a.globalHub.Debugger.Notify(appID, "api_message", payload.SocketID, channel, payload.Name, payload.Data)
 	}
 
 	// Respond with success
@@ -121,7 +117,6 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 
 // authenticateRequest verifies the Pusher REST API request signature.
 func authenticateRequest(r *http.Request, body []byte, appCfg *config.AppConfig) error {
-	// Method\nPath\nQuery params (alphabetical)
 	authKey := r.URL.Query().Get("auth_key")
 	authTimestamp := r.URL.Query().Get("auth_timestamp")
 	authVersion := r.URL.Query().Get("auth_version")
@@ -141,17 +136,14 @@ func authenticateRequest(r *http.Request, body []byte, appCfg *config.AppConfig)
 		return errors.New("Invalid body MD5")
 	}
 
-	// Reconstruct signature string
-	// Params must be ordered alphabetically: auth_key, auth_timestamp, auth_version, body_md5
 	queryParams := fmt.Sprintf("auth_key=%s&auth_timestamp=%s&auth_version=%s&body_md5=%s", authKey, authTimestamp, authVersion, bodyMD5)
-
 	stringToSign := fmt.Sprintf("%s\n%s\n%s", r.Method, r.URL.Path, queryParams)
 
 	mac := hmac.New(sha256.New, []byte(appCfg.AppSecret))
 	mac.Write([]byte(stringToSign))
 	expectedSignature := hex.EncodeToString(mac.Sum(nil))
 
-	if authSignature != expectedSignature {
+	if !hmac.Equal([]byte(authSignature), []byte(expectedSignature)) {
 		return errors.New("Invalid signature")
 	}
 
