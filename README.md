@@ -1,9 +1,3 @@
-<p align="center">
-  <a href="https://laravel.com" target="_blank">
-    <img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20COLOURED%20light.svg" width="350" alt="Laravel Logo">
-  </a>
-</p>
-
 <h1 align="center">Pusher Server Go</h1>
 
 <p align="center">
@@ -38,36 +32,21 @@ By using Go's lightweight concurrency model, this server can handle thousands of
 
 ## Installation
 
-### Requirements
+### Method 1: Automatic Installer (Recommended)
 
-- Go 1.24 or higher installed on your system.
-
-### Step 1: Clone the Repository
-
-Clone the project to your local machine or server:
+To download, configure, and install Pusher Server Go as a systemd service on Linux, run the following command:
 
 ```bash
-git clone https://github.com/SadeghPM/pusher-server-go.git
-cd pusher-server-go
+curl -sSL https://raw.githubusercontent.com/SadeghPM/pusher-server-go/main/install.sh | sudo bash
 ```
 
-### Step 2: Install Go Dependencies
+The script will automatically download the correct binary for your OS and architecture, prompt you for configuration details, create a `config.yaml` file under `/opt/pusher-clone/config.yaml`, and set up a systemd service to run it.
 
-Run `go mod tidy` to download all necessary packages:
+### Method 2: Manual Binary Installation
 
-```bash
-go mod tidy
-```
-
-### Step 3: Configure the Server
-
-Copy the example configuration file:
-
-```bash
-cp config.yaml.example config.yaml
-```
-
-Open `config.yaml` and configure your settings:
+1. Download the latest compiled binary for your operating system and architecture from the [GitHub Releases](https://github.com/SadeghPM/pusher-server-go/releases) page.
+2. Place the binary in your desired installation directory (e.g., `/usr/local/bin` or `/opt/pusher-clone`).
+3. Create a `config.yaml` file in the same directory. Here is an example configuration:
 
 ```yaml
 port: "6001"
@@ -85,51 +64,11 @@ apps:
 > [!NOTE]
 > If `allowed_origins` is empty or omitted, the server will allow connections from any origin.
 
-### Step 4: Run the Server
-
-Start the Go application:
+4. Run the server binary:
 
 ```bash
-go run main.go
+./pusher-clone
 ```
-
-The WebSocket server will start running on the port defined in your configuration file (default is `6001`).
-
----
-
-## Laravel Configuration
-
-To use Pusher Server Go in your Laravel application, configure the `pusher` connection in `config/broadcasting.php`:
-
-```php
-'pusher' => [
-    'driver' => 'pusher',
-    'key' => env('PUSHER_APP_KEY'),
-    'secret' => env('PUSHER_APP_SECRET'),
-    'app_id' => env('PUSHER_APP_ID'),
-    'options' => [
-        'host' => env('PUSHER_HOST', '127.0.0.1'),
-        'port' => env('PUSHER_PORT', 6001),
-        'scheme' => env('PUSHER_SCHEME', 'http'),
-        'encrypted' => false,
-        'useTLS' => false,
-    ],
-],
-```
-
-Next, update your application's `.env` file:
-
-```env
-BROADCAST_CONNECTION=pusher
-PUSHER_APP_ID=your-app-id-1
-PUSHER_APP_KEY=your-app-key-1
-PUSHER_APP_SECRET=your-app-secret-1
-PUSHER_HOST=127.0.0.1
-PUSHER_PORT=6001
-PUSHER_SCHEME=http
-```
-
-Make sure the credentials match the ones configured in your server's `config.yaml`.
 
 ---
 
@@ -159,18 +98,6 @@ The following metrics are exported:
 | `pusher_messages_published_total` | Counter | Total number of messages published per app. |
 | `pusher_rest_api_events_total` | Counter | Total number of events published via the REST API per app. |
 | `pusher_websocket_errors_total` | Counter | Total number of WebSocket errors per app (broken down by read/write/ping). |
-
----
-
-## Production Deployment
-
-To automatically download, configure, and run Pusher Server Go as a systemd service on Linux, run the following command:
-
-```bash
-curl -sSL https://raw.githubusercontent.com/SadeghPM/pusher-server-go/main/install.sh | sudo bash
-```
-
-This script will set up the project under `/opt/pusher-clone` and configure the configuration file at `/opt/pusher-clone/config.yaml`.
 
 ---
 
