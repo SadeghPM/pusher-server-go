@@ -1,78 +1,105 @@
-# Pusher Clone (Go)
+<p align="center">
+  <a href="https://laravel.com" target="_blank">
+    <img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20COLOURED%20light.svg" width="350" alt="Laravel Logo">
+  </a>
+</p>
 
-A lightweight, in-memory, multi-tenant Pusher alternative written in Go, specifically designed to be compatible with Laravel's broadcasting system using the standard Pusher Protocol v7.
+<h1 align="center">Pusher Server Go</h1>
 
-## Features
+<p align="center">
+  A lightweight, high-performance, in-memory, multi-tenant Pusher server alternative written in Go. Designed to be fully compatible with Laravel's broadcasting system using the standard Pusher Protocol v7.
+</p>
 
-- Real-time Admin Dashboard & Debug Console
-- Fully compatible with Pusher Protocol v7
-- Built-in Prometheus metrics exporter (`/metrics` endpoint)
-- Multi-tenant: Support multiple Laravel applications with a single server instance
-- Configured via YAML
-- Supports public and private channels
-- Event broadcasting from Laravel
-- In-memory state management
-- Implements Pusher signature validation for API requests and private channel subscriptions
+<p align="center">
+  <a href="https://github.com/SadeghPM/pusher-server-go/actions"><img src="https://img.shields.io/github/actions/workflow/status/SadeghPM/pusher-server-go/release.yml?branch=main&style=flat-square&color=FF2D20" alt="Build Status"></a>
+  <a href="https://github.com/SadeghPM/pusher-server-go/releases"><img src="https://img.shields.io/github/v/release/SadeghPM/pusher-server-go?style=flat-square&color=FF2D20" alt="Latest Release"></a>
+  <a href="https://golang.org"><img src="https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go Version"></a>
+  <a href="https://github.com/SadeghPM/pusher-server-go/blob/main/LICENSE"><img src="https://img.shields.io/github/license/SadeghPM/pusher-server-go?style=flat-square&color=FF2D20" alt="License"></a>
+</p>
 
-## Setup and Installation
+---
 
-1. Make sure you have Go installed.
-2. Clone this repository.
-3. Install dependencies:
-   ```bash
-   go mod tidy
-   ```
-4. Copy the `config.yaml.example` file to `config.yaml`:
-   ```bash
-   cp config.yaml.example config.yaml
-   ```
-5. Update `config.yaml` with your app credentials. You can add as many apps as needed under the `apps` array.
+## About Pusher Server Go
 
-## Configuration
+Pusher Server Go is a self-hosted, drop-in replacement for Pusher or Laravel Reverb. It handles real-time broadcasting for Laravel applications with zero external dependencies and very low resource usage.
 
-The server relies on a `config.yaml` file for setup. Each app in your `apps` block requires an `app_id`, `app_key`, and `app_secret`.
+By using Go's lightweight concurrency model, this server can handle thousands of concurrent WebSocket connections efficiently, making it ideal for both small projects and high-traffic production applications.
 
-To enhance security, you should configure the `allowed_origins` list for each app. If `allowed_origins` is omitted or empty, the server defaults to allowing connections from any origin.
+## Key Features
+
+- **Pusher compatible**: Fully compatible with the Pusher Protocol (v7). Works with Laravel Echo out-of-the-box.
+- **Multi-Tenant**: Run multiple Laravel applications on a single server instance with isolated credentials.
+- **Admin Dashboard & Debug Console**: A built-in web interface to view active connections, debug channels, and send test events.
+- **Prometheus Metrics**: Built-in `/metrics` endpoint to monitor connections, channels, messages, and API errors.
+- **Secure**: Restrict connections per app using `allowed_origins`.
+- **Easy Configuration**: Simple setup via a single `config.yaml` file.
+
+---
+
+## Installation
+
+### Requirements
+
+- Go 1.24 or higher installed on your system.
+
+### Step 1: Clone the Repository
+
+Clone the project to your local machine or server:
+
+```bash
+git clone https://github.com/SadeghPM/pusher-server-go.git
+cd pusher-server-go
+```
+
+### Step 2: Install Go Dependencies
+
+Run `go mod tidy` to download all necessary packages:
+
+```bash
+go mod tidy
+```
+
+### Step 3: Configure the Server
+
+Copy the example configuration file:
+
+```bash
+cp config.yaml.example config.yaml
+```
+
+Open `config.yaml` and configure your settings:
 
 ```yaml
 port: "6001"
 metrics_port: "9601"
 dashboard_port: "5174"
-admin_token: "my-super-secret-admin-token"
+admin_token: "your-super-secret-admin-token"
 debug: false
 apps:
-  - app_id: "my-app-id-1"
-    app_key: "my-app-key-1"
-    app_secret: "my-app-secret-1"
-    allowed_origins: ["http://localhost:3000", "https://myproductionapp.com"]
+  - app_id: "your-app-id-1"
+    app_key: "your-app-key-1"
+    app_secret: "your-app-secret-1"
+    allowed_origins: ["http://localhost:3000", "https://your-production-app.com"]
 ```
 
-## Running the Server
+> [!NOTE]
+> If `allowed_origins` is empty or omitted, the server will allow connections from any origin.
+
+### Step 4: Run the Server
+
+Start the Go application:
 
 ```bash
 go run main.go
 ```
 
-The server will start on the port specified in your `config.yaml` file (default: 6001).
+The WebSocket server will start running on the port defined in your configuration file (default is `6001`).
 
-## Admin Dashboard
-
-The server includes a real-time admin dashboard with a debug console and event creator, accessible by default on port `5174`. It is secured using an `admin_token` configured in `config.yaml`.
-
-## Observability & Metrics
-
-The server exposes Prometheus metrics at the `/metrics` endpoint (on port 9601 by default, configurable via `metrics_port` in `config.yaml`) to help monitor the health, scale, and performance of your applications.
-
-Available metrics include:
-- `pusher_active_connections` (Gauge) - Current number of active WebSocket connections per app.
-- `pusher_channels_active` (Gauge) - Current number of active channels per app.
-- `pusher_messages_published_total` (Counter) - Total number of messages published per app.
-- `pusher_rest_api_events_total` (Counter) - Total number of events published via the REST API per app.
-- `pusher_websocket_errors_total` (Counter) - Total number of WebSocket errors per app (broken down by read/write/ping).
+---
 
 ## Laravel Configuration
 
-To use this clone in your Laravel application, update your `config/broadcasting.php` file:
+To use Pusher Server Go in your Laravel application, configure the `pusher` connection in `config/broadcasting.php`:
 
 ```php
 'pusher' => [
@@ -81,23 +108,76 @@ To use this clone in your Laravel application, update your `config/broadcasting.
     'secret' => env('PUSHER_APP_SECRET'),
     'app_id' => env('PUSHER_APP_ID'),
     'options' => [
-        'host' => '127.0.0.1', // Your Go server's IP
-        'port' => 6001,        // Your Go server's Port
-        'scheme' => 'http',
+        'host' => env('PUSHER_HOST', '127.0.0.1'),
+        'port' => env('PUSHER_PORT', 6001),
+        'scheme' => env('PUSHER_SCHEME', 'http'),
         'encrypted' => false,
         'useTLS' => false,
     ],
 ],
 ```
 
-Ensure the credentials in your Laravel `.env` match the ones in your `config.yaml` file.
+Next, update your application's `.env` file:
 
-## Production Installation
+```env
+BROADCAST_CONNECTION=pusher
+PUSHER_APP_ID=your-app-id-1
+PUSHER_APP_KEY=your-app-key-1
+PUSHER_APP_SECRET=your-app-secret-1
+PUSHER_HOST=127.0.0.1
+PUSHER_PORT=6001
+PUSHER_SCHEME=http
+```
 
-You can use the provided bash script to automatically download, configure, and install `pusher-clone` as a systemd service on Linux.
+Make sure the credentials match the ones configured in your server's `config.yaml`.
+
+---
+
+## Admin Dashboard
+
+The server includes a real-time admin dashboard with a debug console and event creator.
+- **Default URL**: `http://localhost:5174`
+- **Authentication**: Secured using the `admin_token` configured in `config.yaml`.
+
+With the dashboard, you can:
+- Track active channels and client connections.
+- View real-time log messages and broadcasted events.
+- Trigger test events to verify connection state.
+
+---
+
+## Observability & Metrics
+
+The server exports Prometheus metrics on port `9601` by default (at the `/metrics` endpoint).
+
+The following metrics are exported:
+
+| Metric | Type | Description |
+| :--- | :--- | :--- |
+| `pusher_active_connections` | Gauge | Current number of active WebSocket connections per app. |
+| `pusher_channels_active` | Gauge | Current number of active channels per app. |
+| `pusher_messages_published_total` | Counter | Total number of messages published per app. |
+| `pusher_rest_api_events_total` | Counter | Total number of events published via the REST API per app. |
+| `pusher_websocket_errors_total` | Counter | Total number of WebSocket errors per app (broken down by read/write/ping). |
+
+---
+
+## Production Deployment
+
+To automatically download, configure, and run Pusher Server Go as a systemd service on Linux, run the following command:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/SadeghPM/pusher-server-go/main/install.sh | sudo bash
 ```
 
-The script will setup a multi-tenant `config.yaml` under `/opt/pusher-clone/config.yaml`.
+This script will set up the project under `/opt/pusher-clone` and configure the configuration file at `/opt/pusher-clone/config.yaml`.
+
+---
+
+## Contributing
+
+Thank you for considering contributing to Pusher Server Go! You can contribute by opening issues, submitting pull requests, or improving documentation.
+
+## License
+
+Pusher Server Go is open-source software licensed under the [MIT license](LICENSE).
