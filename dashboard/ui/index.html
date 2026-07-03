@@ -7,7 +7,7 @@
     <meta name="description" content="Admin dashboard for managing Pusher Clone server tenants, debugging events, and monitoring real-time WebSocket connections.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -197,17 +197,19 @@
                                     App Credentials
                                 </h3>
                             </div>
-                            <div class="overview-item">
-                                <label>App ID</label>
-                                <input type="text" id="overview-app-id" readonly>
-                            </div>
-                            <div class="overview-item">
-                                <label>Key</label>
-                                <input type="text" id="overview-key" readonly>
-                            </div>
-                            <div class="overview-item">
-                                <label>Secret</label>
-                                <input type="text" id="overview-secret" readonly>
+                            <div class="card-body">
+                                <div class="overview-item">
+                                    <label>App ID</label>
+                                    <input type="text" id="overview-app-id" readonly>
+                                </div>
+                                <div class="overview-item">
+                                    <label>Key</label>
+                                    <input type="text" id="overview-key" readonly>
+                                </div>
+                                <div class="overview-item">
+                                    <label>Secret</label>
+                                    <input type="text" id="overview-secret" readonly>
+                                </div>
                             </div>
                         </div>
                         <div class="card overview-card">
@@ -217,21 +219,23 @@
                                     Configuration
                                 </h3>
                             </div>
-                            <div class="overview-item">
-                                <label>Allowed Origins <span class="hint">(one per line)</span></label>
-                                <textarea id="overview-origins" rows="3" placeholder="*&#10;http://localhost:3000"></textarea>
-                            </div>
-                            <div class="overview-item">
-                                <label>Webhooks <span class="hint">(one per line)</span></label>
-                                <textarea id="overview-webhooks" rows="3" placeholder="https://example.com/webhook"></textarea>
-                            </div>
-                            <div id="config-save-feedback" class="alert alert-success" style="display: none;">Configuration saved!</div>
-                            <div id="config-save-error" class="alert alert-error" style="display: none;"></div>
-                            <div class="config-actions">
-                                <button id="btn-save-config" class="btn btn-accent">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-                                    Save Changes
-                                </button>
+                            <div class="card-body">
+                                <div class="overview-item">
+                                    <label>Allowed Origins <span class="hint">(one per line)</span></label>
+                                    <textarea id="overview-origins" rows="3" placeholder="*&#10;http://localhost:3000"></textarea>
+                                </div>
+                                <div class="overview-item">
+                                    <label>Webhooks <span class="hint">(one per line)</span></label>
+                                    <textarea id="overview-webhooks" rows="3" placeholder="https://example.com/webhook"></textarea>
+                                </div>
+                                <div id="config-save-feedback" class="alert alert-success" style="display: none;">Configuration saved!</div>
+                                <div id="config-save-error" class="alert alert-error" style="display: none;"></div>
+                                <div class="config-actions">
+                                    <button id="btn-save-config" class="btn btn-accent">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                                        Save Changes
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
