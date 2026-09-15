@@ -7,6 +7,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const tokenInput = document.getElementById('admin-token');
     const btnSaveToken = document.getElementById('save-token');
     const btnLogout = document.getElementById('logout');
+    const themeToggle = document.getElementById('theme-toggle');
+    const wsStatus = document.getElementById('ws-status');
 
     const appSelector = document.getElementById('app-selector');
     const toggleCreator = document.getElementById('toggle-creator');
@@ -56,6 +58,52 @@ document.addEventListener('DOMContentLoaded', () => {
     let isPaused = false;
     let events = [];
     let appToDelete = null;
+    let isDarkMode = false;
+
+    // ==========================================
+    // Theme Management
+    // ==========================================
+    function loadTheme() {
+        const savedTheme = localStorage.getItem('pusher_dashboard_theme');
+        if (savedTheme === 'dark' || (window.matchMedia('(prefers-color-scheme: dark)').matches && !savedTheme)) {
+            isDarkMode = true;
+            document.documentElement.setAttribute('data-theme', 'dark');
+            updateThemeIcons();
+        }
+    }
+
+    function toggleTheme() {
+        isDarkMode = !isDarkMode;
+        if (isDarkMode) {
+            document.documentElement.setAttribute('data-theme', 'dark');
+        } else {
+            document.documentElement.removeAttribute('data-theme');
+        }
+        localStorage.setItem('pusher_dashboard_theme', isDarkMode ? 'dark' : 'light');
+        updateThemeIcons();
+    }
+
+    function updateThemeIcons() {
+        const sunIcon = themeToggle.querySelector('.sun');
+        const moonIcon = themeToggle.querySelector('.moon');
+        if (isDarkMode) {
+            sunIcon.style.display = 'inline';
+            moonIcon.style.display = 'none';
+        } else {
+            sunIcon.style.display = 'none';
+            moonIcon.style.display = 'inline';
+        }
+    }
+
+    function updateWsStatus() {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            wsStatus.className = 'ws-status connected';
+            wsStatus.innerHTML = '<span class="indicator"></span> Connected';
+        } else {
+            wsStatus.className = 'ws-status disconnected';
+            wsStatus.innerHTML = '<span class="indicator"></span> Disconnected';
+        }
+    }
 
     // ==========================================
     // Auth
@@ -85,6 +133,12 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.removeItem('pusher_admin_token');
         location.reload();
     });
+
+    // Theme toggle
+    themeToggle.addEventListener('click', toggleTheme);
+
+    // Initialize theme
+    loadTheme();
 
     // ==========================================
     // Init Dashboard
@@ -244,7 +298,12 @@ document.addEventListener('DOMContentLoaded', () => {
             addEvent(data);
         };
 
-        ws.onclose = () => console.log("WS closed");
+        ws.onclose = () => {
+            console.log("WS closed");
+            updateWsStatus();
+        };
+        ws.onopen = () => updateWsStatus();
+        ws.onerror = () => updateWsStatus();
     }
 
     function addEvent(ev) {
@@ -256,6 +315,16 @@ document.addEventListener('DOMContentLoaded', () => {
     function clearLogs() {
         events = [];
         renderEvents();
+    }
+
+    // ==========================================
+    // Smooth Scroll to Top
+    // ==========================================
+    function scrollToTop() {
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
     }
 
     // ==========================================
@@ -589,4 +658,96 @@ document.addEventListener('DOMContentLoaded', () => {
             if (deleteModal.style.display === 'flex') closeDeleteModal();
         }
     });
+
+    // ==========================================
+    // Auto-hide alerts after 5 seconds
+    // ==========================================
+    function autoHideAlert(alertElement, duration = 5000) {
+        setTimeout(() => {
+            if (alertElement.style.display !== 'none') {
+                alertElement.style.opacity = '0';
+                setTimeout(() => {
+                    alertElement.style.display = 'none';
+                    alertElement.style.opacity = '';
+                }, 300);
+            }
+        }, duration);
+    }
+
+    // Apply auto-hide to existing alert elements
+    const alerts = document.querySelectorAll('.alert');
+    alerts.forEach(alert => {
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach(mutation => {
+                if (mutation.attributeName === 'style' && alert.style.display !== 'none') {
+                    autoHideAlert(alert);
+                }
+            });
+        });
+        observer.observe(alert, { attributes: true });
+    });
+
+    // ==========================================
+    // Add loading states to buttons
+    // ==========================================
+    function setButtonLoading(button, loading = true) {
+        if (loading) {
+            button.disabled = true;
+            button.dataset.originalText = button.innerHTML;
+            button.innerHTML = '<svg class="spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="60" stroke-dashoffset="60"><animate attributeName="stroke-dashoffset" dur="1s" values="60;0" repeatCount="indefinite"/></circle></svg> Loading...';
+        } else {
+            button.disabled = false;
+            button.innerHTML = button.dataset.originalText || button.textContent;
+        }
+    }
+
+    // ==========================================
+    // Initialize tooltip support
+    // ==========================================
+    function initTooltips() {
+        const tooltipElements = document.querySelectorAll('[data-tooltip]');
+        tooltipElements.forEach(el => {
+            el.addEventListener('mouseenter', () => {
+                // Tooltip is handled by CSS
+            });
+        });
+    }
+
+    // Initialize tooltips
+    initTooltips();
+
+    // ==========================================
+    // Responsive sidebar toggle (for mobile)
+    // ==========================================
+    function initResponsiveSidebar() {
+        const sidebar = document.querySelector('.sidebar');
+        const sidebarToggle = document.createElement('button');
+        sidebarToggle.className = 'btn btn-ghost btn-icon mobile-sidebar-toggle';
+        sidebarToggle.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>';
+        sidebarToggle.style.display = 'none';
+        
+        // Check if mobile
+        function checkMobile() {
+            if (window.innerWidth <= 768) {
+                sidebarToggle.style.display = 'flex';
+                if (!document.querySelector('.mobile-sidebar-toggle')) {
+                    document.querySelector('.header-left').prepend(sidebarToggle);
+                }
+            } else {
+                sidebarToggle.style.display = 'none';
+            }
+        }
+        
+        window.addEventListener('resize', checkMobile);
+        checkMobile();
+    }
+
+    // Initialize responsive features
+    initResponsiveSidebar();
+
+    // ==========================================
+    // Console welcome message
+    // ==========================================
+    console.log('%c🎉 Pusher Clone Dashboard', 'font-size: 24px; font-weight: bold; color: #3b82f6;');
+    console.log('%cModern admin dashboard for managing Pusher Clone server tenants', 'font-size: 14px; color: #64748b;');
 });
