@@ -110,6 +110,76 @@ apps:
 	}
 }
 
+func TestNewManager_HostDefaultsToLocalhost(t *testing.T) {
+	tempFile := filepath.Join(t.TempDir(), "config.yaml")
+	configData := []byte(`
+port: "7001"
+apps: []
+`)
+	if err := os.WriteFile(tempFile, configData, 0644); err != nil {
+		t.Fatalf("Failed to write temp config file: %v", err)
+	}
+
+	manager, err := NewManager(tempFile)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	if host := manager.GetConfig().Host; host != "http://localhost:7001" {
+		t.Errorf("Expected default host 'http://localhost:7001', got '%s'", host)
+	}
+}
+
+func TestNewManager_CustomHostNormalized(t *testing.T) {
+	tempFile := filepath.Join(t.TempDir(), "config.yaml")
+	configData := []byte(`
+port: "6001"
+host: " HTTPS://push.example.com:8443/ "
+apps: []
+`)
+	if err := os.WriteFile(tempFile, configData, 0644); err != nil {
+		t.Fatalf("Failed to write temp config file: %v", err)
+	}
+
+	manager, err := NewManager(tempFile)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	if host := manager.GetConfig().Host; host != "https://push.example.com:8443" {
+		t.Errorf("Expected normalized host 'https://push.example.com:8443', got '%s'", host)
+	}
+}
+
+func TestNewManager_InvalidHost(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+	}{
+		{"missing scheme", "push.example.com"},
+		{"unsupported scheme", "ftp://push.example.com"},
+		{"missing host", "https://"},
+		{"path", "https://push.example.com/realtime"},
+		{"query string", "https://push.example.com/?cluster=mt1"},
+		{"fragment", "https://push.example.com/#realtime"},
+		{"user credentials", "https://user:pass@push.example.com"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tempFile := filepath.Join(t.TempDir(), "config.yaml")
+			configData := []byte("host: \"" + tc.host + "\"\napps: []\n")
+			if err := os.WriteFile(tempFile, configData, 0644); err != nil {
+				t.Fatalf("Failed to write temp config file: %v", err)
+			}
+
+			if _, err := NewManager(tempFile); err == nil {
+				t.Errorf("Expected error for host %q, got nil", tc.host)
+			}
+		})
+	}
+}
+
 func TestManager_Reload(t *testing.T) {
 	// Create a temporary directory
 	tempDir, err := os.MkdirTemp("", "config_test_reload")
@@ -510,4 +580,3 @@ func TestManager_UpdateApp_NotFound(t *testing.T) {
 		t.Fatal("Expected error for updating non-existent app, got nil")
 	}
 }
-
