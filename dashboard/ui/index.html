@@ -1,273 +1,506 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pusher Clone Dashboard</title>
-    <meta name="description" content="Admin dashboard for managing Pusher Clone server tenants, debugging events, and monitoring real-time WebSocket connections.">
+    <title>Pusher Server Go — Self-hosted realtime for Laravel</title>
+    <meta name="description" content="A single-binary, self-hosted Pusher replacement built in Go. Protocol v7 compatible, multi-tenant, with a built-in debug console and Prometheus metrics.">
+    <meta name="theme-color" content="#08090c">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23d7ff5f'/><circle cx='16' cy='16' r='3' fill='%230b0d06'/><path d='M11 11a7 7 0 0 0 0 10M21 11a7 7 0 0 1 0 10' fill='none' stroke='%230b0d06' stroke-width='2.2' stroke-linecap='round'/></svg>">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="theme.css">
+    <link rel="stylesheet" href="home.css">
 </head>
-<body>
+<body class="home">
 
-    <!-- Token Modal -->
-    <div id="token-modal" class="modal">
-        <div class="modal-content modal-login">
-            <div class="login-brand">
-                <div class="login-logo">☰</div>
-                <h2>Pusher Clone</h2>
-                <p class="login-subtitle">Enter your admin token to continue</p>
-            </div>
-            <input type="password" id="admin-token" placeholder="Admin Token" autocomplete="off">
-            <button id="save-token" class="btn btn-primary btn-full">Sign In</button>
-        </div>
-    </div>
+    <header class="site-header" id="site-header">
+        <div class="container nav">
+            <a class="brand" href="/" aria-label="Pusher Server Go home">
+                <span class="brand-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+                        <circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"></circle>
+                        <path d="M8.6 8.6a4.8 4.8 0 0 0 0 6.8"></path>
+                        <path d="M15.4 8.6a4.8 4.8 0 0 1 0 6.8"></path>
+                        <path d="M5.2 5.2a9.6 9.6 0 0 0 0 13.6"></path>
+                        <path d="M18.8 5.2a9.6 9.6 0 0 1 0 13.6"></path>
+                    </svg>
+                </span>
+                <span class="brand-word">Pusher Server</span>
+                <span class="brand-badge">GO</span>
+            </a>
 
-    <!-- New Tenant Modal -->
-    <div id="tenant-modal" class="modal" style="display: none;">
-        <div class="modal-content modal-form">
-            <div class="modal-header">
-                <div>
-                    <h2>Add New Tenant</h2>
-                    <p class="modal-subtitle">Create a new application configuration</p>
-                </div>
-                <button id="close-tenant-modal" class="modal-close">&times;</button>
-            </div>
-            <div id="tenant-error" class="alert alert-error" style="display: none;"></div>
-            <div id="tenant-success" class="alert alert-success" style="display: none;"></div>
-            <form id="tenant-form">
-                <div class="form-group">
-                    <label for="tenant-app-id">App ID <span class="required">*</span></label>
-                    <input type="text" id="tenant-app-id" placeholder="e.g. my-app-id" required pattern="[a-z0-9][a-z0-9-]*[a-z0-9]" autocomplete="off">
-                    <div class="field-hint">Lowercase letters, digits, and hyphens only. Must start and end with a letter or digit (2-64 chars).</div>
-                    <div id="slug-error" class="field-error" style="display: none;"></div>
-                </div>
-                <div class="form-actions">
-                    <button type="button" id="btn-cancel-tenant" class="btn btn-ghost">Cancel</button>
-                    <button type="submit" id="btn-create-tenant" class="btn btn-primary">Create Tenant</button>
-                </div>
-            </form>
-        </div>
-    </div>
+            <nav class="nav-links" aria-label="Main">
+                <a href="#features">Features</a>
+                <a href="#quickstart">Quick start</a>
+                <a href="#observability">Observability</a>
+                <a href="https://github.com/SadeghPM/pusher-server-go" target="_blank" rel="noopener noreferrer">GitHub</a>
+            </nav>
 
-    <!-- Delete Confirmation Modal -->
-    <div id="delete-modal" class="modal" style="display: none;">
-        <div class="modal-content modal-confirm">
-            <div class="confirm-icon">🗑️</div>
-            <h2>Delete Tenant</h2>
-            <p class="confirm-text">Are you sure you want to delete <strong id="delete-app-name"></strong>? This action cannot be undone.</p>
-            <div id="delete-error" class="alert alert-error" style="display: none;"></div>
-            <div class="form-actions">
-                <button type="button" id="btn-cancel-delete" class="btn btn-ghost">Cancel</button>
-                <button type="button" id="btn-confirm-delete" class="btn btn-danger">Delete Tenant</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Main Layout -->
-    <div id="app" style="display: none;">
-        <!-- Header -->
-        <header class="header">
-            <div class="header-left">
-                <div class="logo"><span class="logo-icon">☰</span> Pusher Clone</div>
-            </div>
-            <div class="header-nav">
-                <div class="app-picker">
-                    <label for="app-selector">App</label>
-                    <select id="app-selector"></select>
-                </div>
-                <div class="theme-toggle" id="theme-toggle">
-                    <span class="theme-icon sun">☀️</span>
-                    <span class="theme-icon moon">🌙</span>
-                </div>
-                <button id="logout" class="btn btn-ghost btn-sm">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
-                    Logout
+            <div class="nav-actions">
+                <a class="btn btn-primary btn-sm" id="login-btn" href="/admin">
+                    Log in
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M5 12h14"></path>
+                        <path d="m12 5 7 7-7 7"></path>
+                    </svg>
+                </a>
+                <button class="nav-toggle" id="nav-toggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="mobile-menu">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                        <path d="M4 7h16M4 12h16M4 17h16"></path>
+                    </svg>
                 </button>
             </div>
-        </header>
+        </div>
 
-        <div class="layout">
-            <!-- Sidebar -->
-            <aside class="sidebar">
-                <nav>
-                    <ul>
+        <div class="mobile-menu" id="mobile-menu" hidden>
+            <div class="container">
+                <a href="#features">Features <span aria-hidden="true">↘</span></a>
+                <a href="#quickstart">Quick start <span aria-hidden="true">↘</span></a>
+                <a href="#observability">Observability <span aria-hidden="true">↘</span></a>
+                <a href="https://github.com/SadeghPM/pusher-server-go" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+                <a class="btn btn-primary btn-block" href="/admin">Log in to dashboard</a>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <!-- ====================================================
+             Hero
+             ==================================================== -->
+        <section class="hero">
+            <div class="hero-bg" aria-hidden="true"></div>
+            <div class="container hero-grid">
+                <div class="hero-copy">
+                    <p class="eyebrow"><span class="dot"></span> Pusher Protocol v7 · Self-hosted</p>
+                    <h1>Real-time for Laravel.<br><span class="accent">Without the bill.</span></h1>
+                    <p class="hero-lead">
+                        A single-binary, in-memory Pusher replacement written in Go. Keep Laravel Echo
+                        and your existing broadcasts — point them at your own server and own the
+                        realtime layer, with no monthly subscription.
+                    </p>
+
+                    <div class="hero-actions">
+                        <a class="btn btn-primary btn-lg" href="/admin">
+                            Open dashboard
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M5 12h14"></path>
+                                <path d="m12 5 7 7-7 7"></path>
+                            </svg>
+                        </a>
+                        <a class="btn btn-secondary btn-lg" href="#quickstart">
+                            Quick start
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M12 5v14"></path>
+                                <path d="m19 12-7 7-7-7"></path>
+                            </svg>
+                        </a>
+                    </div>
+
+                    <ul class="hero-meta">
                         <li>
-                            <a href="#" class="active" id="nav-debug">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
-                                Debug Console
-                            </a>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5L20 7"></path></svg>
+                            One Go binary
                         </li>
                         <li>
-                            <a href="#" id="nav-overview">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-                                Overview
-                            </a>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5L20 7"></path></svg>
+                            No Redis required
+                        </li>
+                        <li>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5L20 7"></path></svg>
+                            Protocol v7
                         </li>
                     </ul>
+                </div>
+
+                <div class="hero-visual" aria-hidden="true">
+                    <div class="console-card">
+                        <div class="console-top">
+                            <span class="window-dots"><span></span><span></span><span></span></span>
+                            <span class="console-title">realtime / event stream</span>
+                            <span class="console-conn"><span class="dot"></span> Connected</span>
+                        </div>
+                        <div class="console-body" id="hero-events">
+                            <div class="hero-event">
+                                <span class="time">14:32:07</span>
+                                <div>
+                                    <div class="line"><span class="badge badge-success">connection</span><span class="name">client connected</span></div>
+                                    <div class="meta">socket 842.119</div>
+                                </div>
+                            </div>
+                            <div class="hero-event">
+                                <span class="time">14:32:08</span>
+                                <div>
+                                    <div class="line"><span class="badge badge-info">subscription</span><span class="name">private-orders.42</span></div>
+                                    <div class="meta">socket 842.119</div>
+                                </div>
+                            </div>
+                            <div class="hero-event">
+                                <span class="time">14:32:09</span>
+                                <div>
+                                    <div class="line"><span class="badge badge-accent">api_message</span><span class="name">OrderShipped</span></div>
+                                    <div class="meta">channel private-orders.42</div>
+                                </div>
+                            </div>
+                            <div class="hero-event">
+                                <span class="time">14:32:11</span>
+                                <div>
+                                    <div class="line"><span class="badge badge-warning">client_event</span><span class="name">typing</span></div>
+                                    <div class="meta">channel presence-chat.7</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="console-footer">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"></path><path d="M5 8v8"></path><path d="M19 8v8"></path></svg>
+                            <span>tenant <span class="app">my-app</span></span>
+                            <span class="console-sep">·</span>
+                            <span>protocol 7</span>
+                            <span class="console-live">live</span>
+                        </div>
+                    </div>
+
+                    <div class="hero-chip hero-chip--env">
+                        <span class="chip-label">laravel/.env</span>
+                        <code>PUSHER_HOST=<b>127.0.0.1</b></code>
+                        <code>PUSHER_PORT=<b>6001</b></code>
+                    </div>
+                    <div class="hero-chip hero-chip--v7">
+                        <span class="chip-big">v7</span>
+                        <span class="chip-small">wire compatible</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="container">
+                <div class="stack-strip">
+                    <span class="stack-label">Works with</span>
+                    <div class="stack-items">
+                        <span>Laravel Echo</span>
+                        <span>pusher-js</span>
+                        <span>Pusher Protocol v7</span>
+                        <span>Prometheus</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ====================================================
+             Features
+             ==================================================== -->
+        <section class="section" id="features">
+            <div class="container">
+                <div class="section-head">
+                    <p class="eyebrow"><span class="dot"></span> Built for production</p>
+                    <h2>Small server. Serious capabilities.</h2>
+                    <p>Everything you expect from a managed realtime service, in one process you control.</p>
+                </div>
+
+                <div class="features-grid">
+                    <article class="feature-card">
+                        <div class="feature-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7V3m8 4V3"></path><path d="M5 7h14v5a7 7 0 0 1-14 0V7z"></path><path d="M12 19v3"></path></svg>
+                        </div>
+                        <h3>Drop-in compatible</h3>
+                        <p>Speaks Pusher Protocol v7. Laravel Echo and pusher-js connect without a single client-side change.</p>
+                        <span class="feature-tag">zero migration</span>
+                    </article>
+
+                    <article class="feature-card">
+                        <div class="feature-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>
+                        </div>
+                        <h3>Multi-tenant by design</h3>
+                        <p>Host several apps on one instance with isolated keys, secrets, allowed origins and webhooks.</p>
+                        <span class="feature-tag">per-app isolation</span>
+                    </article>
+
+                    <article class="feature-card">
+                        <div class="feature-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"></path><path d="M12 19h8"></path></svg>
+                        </div>
+                        <h3>Live debug console</h3>
+                        <p>Watch connections, subscriptions, client events and API messages stream in as they happen.</p>
+                        <span class="feature-tag">real-time</span>
+                    </article>
+
+                    <article class="feature-card">
+                        <div class="feature-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>
+                        </div>
+                        <h3>Test broadcasts</h3>
+                        <p>Send an event to any channel straight from the dashboard. No tinker session, no guesswork.</p>
+                        <span class="feature-tag">built in</span>
+                    </article>
+
+                    <article class="feature-card">
+                        <div class="feature-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M7 15v3"></path><path d="M12 10v8"></path><path d="M17 6v12"></path></svg>
+                        </div>
+                        <h3>Prometheus metrics</h3>
+                        <p>Export active connections, channels, published messages and websocket errors on a dedicated port.</p>
+                        <span class="feature-tag">observable</span>
+                    </article>
+
+                    <article class="feature-card">
+                        <div class="feature-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path></svg>
+                        </div>
+                        <h3>Config that follows you</h3>
+                        <p>One <code>config.yaml</code>, hot-reloaded on save. Change origins or webhooks without a restart.</p>
+                        <span class="feature-tag">zero downtime</span>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <!-- ====================================================
+             Quick start
+             ==================================================== -->
+        <section class="section quickstart" id="quickstart">
+            <div class="container">
+                <div class="section-head">
+                    <p class="eyebrow"><span class="dot"></span> Three steps</p>
+                    <h2>From zero to broadcasting.</h2>
+                    <p>Install the binary, point Laravel at it, and open the control room. That is the whole setup.</p>
+                </div>
+
+                <div class="quickstart-grid">
+                    <div class="steps">
+                        <div class="step">
+                            <span class="step-num">01</span>
+                            <div>
+                                <h3>Install the server</h3>
+                                <p>Use the installer or drop a release binary on any host. A single process serves WebSockets and the REST API.</p>
+                            </div>
+                        </div>
+                        <div class="step">
+                            <span class="step-num">02</span>
+                            <div>
+                                <h3>Point Laravel at it</h3>
+                                <p>Set the Pusher environment keys to your host and port. Your existing broadcast events stay exactly as they are.</p>
+                            </div>
+                        </div>
+                        <div class="step">
+                            <span class="step-num">03</span>
+                            <div>
+                                <h3>Open the control room</h3>
+                                <p>Log in with the <code>admin_token</code> from your config, watch events arrive, and fire a test broadcast.</p>
+                            </div>
+                        </div>
+                        <div class="steps-cta">
+                            <a class="btn btn-secondary" href="/admin">
+                                Log in to dashboard
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
+                            </a>
+                        </div>
+                    </div>
+
+                    <div class="code-card">
+                        <div class="code-tabs" role="tablist" aria-label="Quick start examples">
+                            <button class="code-tab" type="button" role="tab" id="tab-install" aria-controls="panel-install" aria-selected="true" data-tab="install">1. Install</button>
+                            <button class="code-tab" type="button" role="tab" id="tab-env" aria-controls="panel-env" aria-selected="false" tabindex="-1" data-tab="env">2. Laravel .env</button>
+                            <button class="code-tab" type="button" role="tab" id="tab-broadcast" aria-controls="panel-broadcast" aria-selected="false" tabindex="-1" data-tab="broadcast">3. Broadcast</button>
+                        </div>
+
+                        <div class="code-panel" role="tabpanel" id="panel-install" aria-labelledby="tab-install">
+                            <div class="code-panel-head">
+                                <span>terminal</span>
+                                <button class="copy-btn" type="button" data-copy-target="code-install" aria-label="Copy install command">Copy</button>
+                            </div>
+                            <pre><code id="code-install"><span class="tok-comment"># Linux installer, creates a systemd service</span>
+curl -sSL https://raw.githubusercontent.com/SadeghPM/pusher-server-go/main/install.sh | sudo bash
+
+<span class="tok-comment"># or run a release binary directly</span>
+./pusher-clone --config ./config.yaml</code></pre>
+                            <p class="code-note">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 8h.01"></path></svg>
+                                The installer writes <code>/opt/pusher-clone/config.yaml</code> and registers a service. Manual installs are fully supported too.
+                            </p>
+                        </div>
+
+                        <div class="code-panel" role="tabpanel" id="panel-env" aria-labelledby="tab-env" hidden>
+                            <div class="code-panel-head">
+                                <span>.env</span>
+                                <button class="copy-btn" type="button" data-copy-target="code-env" aria-label="Copy Laravel environment variables">Copy</button>
+                            </div>
+                            <pre><code id="code-env"><span class="tok-key">BROADCAST_CONNECTION</span>=pusher
+
+<span class="tok-key">PUSHER_APP_ID</span>=my-app-id
+<span class="tok-key">PUSHER_APP_KEY</span>=my-app-key
+<span class="tok-key">PUSHER_APP_SECRET</span>=my-app-secret
+<span class="tok-key">PUSHER_HOST</span>=127.0.0.1
+<span class="tok-key">PUSHER_PORT</span>=6001
+<span class="tok-key">PUSHER_SCHEME</span>=http
+<span class="tok-key">PUSHER_APP_CLUSTER</span>=mt1</code></pre>
+                            <p class="code-note">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 8h.01"></path></svg>
+                                Match these to a tenant in <code>config.yaml</code>. In production, use HTTPS and set <code>PUSHER_SCHEME=https</code>.
+                            </p>
+                        </div>
+
+                        <div class="code-panel" role="tabpanel" id="panel-broadcast" aria-labelledby="tab-broadcast" hidden>
+                            <div class="code-panel-head">
+                                <span>Laravel + Echo</span>
+                                <button class="copy-btn" type="button" data-copy-target="code-broadcast" aria-label="Copy broadcasting example">Copy</button>
+                            </div>
+                            <pre><code id="code-broadcast"><span class="tok-comment">// Laravel — dispatch an event</span>
+broadcast(new OrderShipped($order))-&gt;toOthers();
+
+<span class="tok-comment">// Browser — listen with Echo</span>
+Echo.private(`orders.${orderId}`)
+    .listen(<span class="tok-string">'OrderShipped'</span>, (e) =&gt; {
+        console.log(e.order);
+    });</code></pre>
+                            <p class="code-note">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 8h.01"></path></svg>
+                                Nothing else changes. The server handles channels, presence, auth and delivery in memory.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ====================================================
+             Observability
+             ==================================================== -->
+        <section class="section" id="observability">
+            <div class="container">
+                <div class="observe-card">
+                    <div class="observe-copy">
+                        <p class="eyebrow"><span class="dot"></span> Observability</p>
+                        <h2>Know what your realtime layer is doing.</h2>
+                        <p>
+                            Scrape the built-in Prometheus endpoint and wire the server into the
+                            monitoring you already run. Connections, channels, messages and errors
+                            are available out of the box.
+                        </p>
+                        <ul class="check-list">
+                            <li>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5L20 7"></path></svg>
+                                Dedicated metrics port, no extra agent
+                            </li>
+                            <li>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5L20 7"></path></svg>
+                                Per-app labels for connections and messages
+                            </li>
+                            <li>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5L20 7"></path></svg>
+                                Works with Grafana, VictoriaMetrics and friends
+                            </li>
+                        </ul>
+                    </div>
+
+                    <div class="metrics-card" aria-label="Example Prometheus scrape">
+                        <div class="metrics-head">
+                            <span><span class="method">GET</span> :9601/metrics</span>
+                            <span class="metrics-ok">200 OK</span>
+                        </div>
+                        <div class="metric-row">
+                            <div><span class="metric-name">pusher_active_connections</span><span class="metric-type">gauge</span></div>
+                            <span class="metric-value">1,284</span>
+                            <div class="metric-bar"><span style="width: 72%"></span></div>
+                        </div>
+                        <div class="metric-row">
+                            <div><span class="metric-name">pusher_channels_active</span><span class="metric-type">gauge</span></div>
+                            <span class="metric-value">3,902</span>
+                            <div class="metric-bar"><span style="width: 54%"></span></div>
+                        </div>
+                        <div class="metric-row">
+                            <div><span class="metric-name">pusher_messages_published_total</span><span class="metric-type">counter</span></div>
+                            <span class="metric-value">48.2k</span>
+                            <div class="metric-bar"><span style="width: 86%"></span></div>
+                        </div>
+                        <div class="metric-row">
+                            <div><span class="metric-name">pusher_websocket_errors_total</span><span class="metric-type">counter</span></div>
+                            <span class="metric-value is-zero">0</span>
+                            <div class="metric-bar"><span style="width: 2%"></span></div>
+                        </div>
+                        <div class="metrics-foot">sample scrape · every 15s</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ====================================================
+             CTA
+             ==================================================== -->
+        <section class="cta-section">
+            <div class="container">
+                <div class="cta-card">
+                    <div class="cta-copy">
+                        <p class="eyebrow"><span class="dot"></span> Control room</p>
+                        <h2>See every event as it happens.</h2>
+                        <p>Sign in with the <code>admin_token</code> from your config. Inspect channels, watch traffic and send a test broadcast — all from your own server.</p>
+                    </div>
+                    <div class="cta-actions">
+                        <a class="btn btn-primary btn-lg" href="/admin">
+                            Log in to dashboard
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
+                        </a>
+                        <a class="btn btn-secondary btn-lg" href="https://github.com/SadeghPM/pusher-server-go" target="_blank" rel="noopener noreferrer">
+                            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.49 0-.24-.01-1.05-.01-1.9-2.78.62-3.37-1.21-3.37-1.21-.45-1.18-1.11-1.5-1.11-1.5-.91-.63.07-.62.07-.62 1 .07 1.53 1.05 1.53 1.05.89 1.57 2.34 1.12 2.91.86.09-.66.35-1.12.63-1.38-2.22-.26-4.56-1.14-4.56-5.06 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.37 9.37 0 0 1 5 0c1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.93-2.34 4.8-4.57 5.05.36.32.68.94.68 1.9 0 1.37-.01 2.48-.01 2.82 0 .27.18.6.69.49A10.26 10.26 0 0 0 22 12.25C22 6.58 17.52 2 12 2Z"></path></svg>
+                            View source
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="site-footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-brand">
+                    <a class="brand" href="/" aria-label="Pusher Server Go home">
+                        <span class="brand-mark" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+                                <circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"></circle>
+                                <path d="M8.6 8.6a4.8 4.8 0 0 0 0 6.8"></path>
+                                <path d="M15.4 8.6a4.8 4.8 0 0 1 0 6.8"></path>
+                                <path d="M5.2 5.2a9.6 9.6 0 0 0 0 13.6"></path>
+                                <path d="M18.8 5.2a9.6 9.6 0 0 1 0 13.6"></path>
+                            </svg>
+                        </span>
+                        <span class="brand-word">Pusher Server</span>
+                        <span class="brand-badge">GO</span>
+                    </a>
+                    <p>Self-hosted realtime infrastructure for Laravel and anything that speaks the Pusher protocol.</p>
+                    <a class="footer-login" href="/admin">Log in to dashboard <span aria-hidden="true">→</span></a>
+                </div>
+
+                <nav class="footer-col" aria-label="Product">
+                    <h4>Product</h4>
+                    <a href="#features">Features</a>
+                    <a href="#quickstart">Quick start</a>
+                    <a href="#observability">Observability</a>
+                    <a href="/admin">Admin dashboard</a>
                 </nav>
-                <div class="sidebar-bottom">
-                    <button id="btn-add-tenant" class="btn btn-primary btn-full">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                        New Tenant
-                    </button>
-                </div>
-            </aside>
 
-            <!-- Main Content -->
-            <main class="main-content">
-                <div class="page-header">
-                    <h1 id="app-title">Debug Console</h1>
-                </div>
+                <nav class="footer-col" aria-label="Resources">
+                    <h4>Resources</h4>
+                    <a href="https://github.com/SadeghPM/pusher-server-go" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+                    <a href="https://github.com/SadeghPM/pusher-server-go/releases" target="_blank" rel="noopener noreferrer">Releases <span aria-hidden="true">↗</span></a>
+                    <a href="https://github.com/SadeghPM/pusher-server-go#readme" target="_blank" rel="noopener noreferrer">README <span aria-hidden="true">↗</span></a>
+                    <a href="https://github.com/SadeghPM/pusher-server-go#observability--metrics" target="_blank" rel="noopener noreferrer">Metrics <span aria-hidden="true">↗</span></a>
+                </nav>
 
-                <div id="view-debug">
-                    <div class="controls">
-                        <button id="btn-pause" class="btn btn-control">
-                            <svg id="pause-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
-                            <span id="pause-text">Pause</span>
-                        </button>
-                        <button id="btn-clear" class="btn btn-control">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                            Clear
-                        </button>
-                        <div class="search-box">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                            <input type="text" id="search-events" placeholder="Search events...">
-                        </div>
-                    </div>
+                <nav class="footer-col" aria-label="Protocol">
+                    <h4>Protocol</h4>
+                    <a href="https://pusher.com/docs/channels/library_auth_reference/pusher-websockets-protocol/" target="_blank" rel="noopener noreferrer">Pusher protocol <span aria-hidden="true">↗</span></a>
+                    <a href="https://laravel.com/docs/broadcasting" target="_blank" rel="noopener noreferrer">Laravel broadcasting <span aria-hidden="true">↗</span></a>
+                    <a href="https://laravel.com/docs/broadcasting#client-side-installation" target="_blank" rel="noopener noreferrer">Laravel Echo <span aria-hidden="true">↗</span></a>
+                </nav>
+            </div>
 
-                    <!-- Event Creator -->
-                    <div class="card event-creator-section">
-                        <div class="event-creator-header" id="toggle-creator">
-                            <div class="event-creator-title">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-                                Event Creator
-                            </div>
-                            <svg id="toggle-icon" class="toggle-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                        </div>
-                        <div class="event-creator-body" id="creator-body" style="display: none;">
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label>Channel</label>
-                                    <input type="text" id="creator-channel" placeholder="my-channel" value="my-channel">
-                                </div>
-                                <div class="form-group">
-                                    <label>Event</label>
-                                    <input type="text" id="creator-event" placeholder="my-event" value="my-event">
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label>Data (JSON)</label>
-                                <textarea id="creator-data" rows="3">{"message": "hello world"}</textarea>
-                            </div>
-                            <button id="btn-send-event" class="btn btn-primary">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                                Send Event
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Debug Console Table -->
-                    <div class="card table-container">
-                        <div class="ws-status connected" id="ws-status">
-                            <span class="indicator"></span>
-                            Connected
-                        </div>
-                        <table class="event-table">
-                            <thead>
-                                <tr>
-                                    <th>EVENT</th>
-                                    <th>DETAILS</th>
-                                    <th>TIME</th>
-                                </tr>
-                            </thead>
-                            <tbody id="event-log">
-                                <tr id="empty-state">
-                                    <td colspan="3" class="empty-message">
-                                        <div class="empty-icon">📩</div>
-                                        <div>Waiting for new events...</div>
-                                        <div class="empty-hint">Events will appear here in real-time</div>
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <div id="view-overview" style="display: none;">
-                    <div class="overview-grid">
-                        <div class="card overview-card">
-                            <div class="card-header">
-                                <h3>
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                                    App Credentials
-                                </h3>
-                            </div>
-                            <div class="card-body">
-                                <div class="overview-item">
-                                    <label>App ID</label>
-                                    <input type="text" id="overview-app-id" readonly>
-                                </div>
-                                <div class="overview-item">
-                                    <label>Key</label>
-                                    <input type="text" id="overview-key" readonly>
-                                </div>
-                                <div class="overview-item">
-                                    <label>Secret</label>
-                                    <input type="text" id="overview-secret" readonly>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="card overview-card">
-                            <div class="card-header">
-                                <h3>
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-                                    Configuration
-                                </h3>
-                            </div>
-                            <div class="card-body">
-                                <div class="overview-item">
-                                    <label>Allowed Origins <span class="hint">(one per line)</span></label>
-                                    <textarea id="overview-origins" rows="3" placeholder="*&#10;http://localhost:3000"></textarea>
-                                </div>
-                                <div class="overview-item">
-                                    <label>Webhooks <span class="hint">(one per line)</span></label>
-                                    <textarea id="overview-webhooks" rows="3" placeholder="https://example.com/webhook"></textarea>
-                                </div>
-                                <div id="config-save-feedback" class="alert alert-success" style="display: none;">Configuration saved!</div>
-                                <div id="config-save-error" class="alert alert-error" style="display: none;"></div>
-                                <div class="config-actions">
-                                    <button id="btn-save-config" class="btn btn-primary">
-                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-                                        Save Changes
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card danger-zone">
-                        <div class="card-header">
-                            <h3>
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
-                                Danger Zone
-                            </h3>
-                        </div>
-                        <div class="danger-content">
-                            <div class="danger-info">
-                                <strong>Delete this tenant</strong>
-                                <p>Once deleted, all configuration for this tenant will be permanently removed from config.yaml.</p>
-                            </div>
-                            <button id="btn-delete-tenant" class="btn btn-danger-outline">Delete Tenant</button>
-                        </div>
-                    </div>
-                </div>
-            </main>
+            <div class="footer-bottom">
+                <span>© <span id="year">2026</span> Pusher Server Go</span>
+                <span>Built with Go. Runs on your infrastructure.</span>
+            </div>
         </div>
-    </div>
+    </footer>
 
-    <script src="app.js"></script>
+    <script src="home.js"></script>
 </body>
 </html>

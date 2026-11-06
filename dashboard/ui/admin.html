@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin · Pusher Server Go</title>
+    <meta name="description" content="Pusher Server Go admin control room: monitor realtime events, manage tenants and send test broadcasts.">
+    <meta name="robots" content="noindex">
+    <meta name="theme-color" content="#08090c" id="meta-theme-color">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23d7ff5f'/><circle cx='16' cy='16' r='3' fill='%230b0d06'/><path d='M11 11a7 7 0 0 0 0 10M21 11a7 7 0 0 1 0 10' fill='none' stroke='%230b0d06' stroke-width='2.2' stroke-linecap='round'/></svg>">
+    <script>
+        try {
+            if (localStorage.getItem('pusher_dashboard_theme') === 'light') {
+                document.documentElement.setAttribute('data-theme', 'light');
+            }
+        } catch (error) { /* private browsing */ }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="theme.css">
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body class="admin-body">
+
+    <!-- ====================================================
+         Login
+         ==================================================== -->
+    <div class="auth-shell" id="login-view">
+        <div class="auth-bg" aria-hidden="true"></div>
+
+        <header class="auth-top">
+            <a class="brand" href="/" aria-label="Pusher Server Go home">
+                <span class="brand-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+                        <circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"></circle>
+                        <path d="M8.6 8.6a4.8 4.8 0 0 0 0 6.8"></path>
+                        <path d="M15.4 8.6a4.8 4.8 0 0 1 0 6.8"></path>
+                        <path d="M5.2 5.2a9.6 9.6 0 0 0 0 13.6"></path>
+                        <path d="M18.8 5.2a9.6 9.6 0 0 1 0 13.6"></path>
+                    </svg>
+                </span>
+                <span class="brand-word">Pusher Server</span>
+                <span class="brand-badge">GO</span>
+            </a>
+            <a class="auth-back" href="/">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>
+                Back to home
+            </a>
+        </header>
+
+        <main class="auth-main">
+            <div class="auth-card">
+                <div class="auth-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="4" y="10" width="16" height="10" rx="2"></rect>
+                        <path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
+                    </svg>
+                </div>
+                <p class="eyebrow">Admin access</p>
+                <h1>Welcome back.</h1>
+                <p class="auth-sub">Enter the <code>admin_token</code> from your <code>config.yaml</code> to open the control room.</p>
+
+                <form class="auth-form" id="login-form" novalidate>
+                    <div class="field">
+                        <label for="admin-token">Admin token</label>
+                        <div class="password-field">
+                            <input class="input" type="password" id="admin-token" placeholder="Your admin token" autocomplete="current-password" required aria-describedby="login-error">
+                            <button class="field-icon-btn" type="button" id="toggle-token" aria-label="Show token" aria-pressed="false">
+                                <svg class="icon-show" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                                <svg class="icon-hide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 3 18 18"></path><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"></path><path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1"></path><path d="M6.2 6.2A17 17 0 0 0 2 12s3.5 7 10 7a10.8 10.8 0 0 0 4.1-.8"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-error" id="login-error" role="alert" hidden>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg>
+                        <span id="login-error-text"></span>
+                    </div>
+
+                    <button class="btn btn-primary btn-block" type="submit" id="save-token">Sign in</button>
+                </form>
+
+                <div class="auth-foot">
+                    <span>Token stays in this browser.</span>
+                    <a href="/">View home</a>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ====================================================
+         Dashboard shell
+         ==================================================== -->
+    <div class="admin-shell" id="app" hidden>
+
+        <aside class="sidebar" id="sidebar" aria-label="Dashboard sidebar">
+            <div class="sidebar-head">
+                <a class="brand" href="/" aria-label="Pusher Server Go home">
+                    <span class="brand-mark" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+                            <circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"></circle>
+                            <path d="M8.6 8.6a4.8 4.8 0 0 0 0 6.8"></path>
+                            <path d="M15.4 8.6a4.8 4.8 0 0 1 0 6.8"></path>
+                            <path d="M5.2 5.2a9.6 9.6 0 0 0 0 13.6"></path>
+                            <path d="M18.8 5.2a9.6 9.6 0 0 1 0 13.6"></path>
+                        </svg>
+                    </span>
+                    <span class="brand-word">Pusher Server</span>
+                    <span class="brand-badge">GO</span>
+                </a>
+                <button class="icon-btn sidebar-close" type="button" id="sidebar-close" aria-label="Close menu">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+                </button>
+            </div>
+
+            <div class="tenant-switcher">
+                <div class="tenant-switcher-top">
+                    <span class="field-label">Active tenant</span>
+                    <span class="count-pill" id="tenant-count">0</span>
+                </div>
+                <div class="select-wrap">
+                    <select class="select" id="app-selector" aria-label="Active tenant"></select>
+                    <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+                </div>
+                <button class="btn btn-secondary btn-sm btn-block" type="button" id="btn-add-tenant">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                    New tenant
+                </button>
+            </div>
+
+            <nav class="side-nav" aria-label="Dashboard views">
+                <p class="nav-section-label">Monitor</p>
+                <a class="side-link is-active" href="#/debug" id="nav-debug" aria-current="page">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2.5 6.5L14 5l2.5 7H21"></path></svg>
+                    <span>Live events</span>
+                </a>
+                <a class="side-link" href="#/overview" id="nav-overview">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7"></path><path d="M4 10V3"></path><path d="M12 21v-9"></path><path d="M12 8V3"></path><path d="M20 21v-5"></path><path d="M20 12V3"></path><path d="M1 14h6"></path><path d="M9 8h6"></path><path d="M17 16h6"></path></svg>
+                    <span>Overview</span>
+                </a>
+            </nav>
+
+            <div class="sidebar-foot">
+                <div class="server-status" id="server-status" role="status">
+                    <span class="status-dot"></span>
+                    <div>
+                        <strong id="server-status-text">Checking server…</strong>
+                        <span id="server-status-sub">Pusher protocol v7</span>
+                    </div>
+                </div>
+                <a class="btn btn-ghost btn-sm btn-block sidebar-site-link" href="/">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><path d="M15 3h6v6"></path><path d="M10 14 21 3"></path></svg>
+                    View site
+                </a>
+            </div>
+        </aside>
+
+        <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
+
+        <div class="workspace">
+            <header class="topbar">
+                <button class="icon-btn topbar-menu" type="button" id="sidebar-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
+                </button>
+
+                <div class="topbar-context">
+                    <span class="context-label">Workspace</span>
+                    <strong id="topbar-app">—</strong>
+                </div>
+
+                <div class="topbar-actions">
+                    <span class="status-pill is-connecting" id="ws-status" role="status">
+                        <span class="status-dot"></span>
+                        <span id="ws-status-text">Connecting</span>
+                    </span>
+                    <button class="icon-btn theme-toggle" type="button" id="theme-toggle" aria-label="Switch to light theme">
+                        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+                        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"></path></svg>
+                    </button>
+                    <button class="btn btn-ghost btn-sm" type="button" id="logout">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><path d="m16 17 5-5-5-5"></path><path d="M21 12H9"></path></svg>
+                        <span>Log out</span>
+                    </button>
+                </div>
+            </header>
+
+            <main class="main">
+                <div class="empty-state empty-workspace" id="no-tenants" hidden>
+                    <div class="empty-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 9 5-9 5-9-5 9-5Z"></path><path d="m3 12 9 5 9-5"></path><path d="m3 17 9 5 9-5"></path></svg>
+                    </div>
+                    <p class="eyebrow">Get started</p>
+                    <h2>No tenants yet</h2>
+                    <p>Create your first app to get credentials and start broadcasting realtime events.</p>
+                    <button class="btn btn-primary" type="button" id="btn-add-tenant-empty">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                        Create your first tenant
+                    </button>
+                </div>
+
+                <div id="workspace-content">
+                    <!-- ============================================
+                         Live events
+                         ============================================ -->
+                    <section id="view-debug" aria-labelledby="debug-title">
+                        <div class="page-head">
+                            <div>
+                                <p class="eyebrow">Monitor</p>
+                                <h1 id="debug-title">Live events</h1>
+                                <p class="page-sub">Connections, subscriptions and broadcasts for <code id="debug-app-label">—</code>.</p>
+                            </div>
+                            <button class="btn btn-primary" type="button" id="btn-open-creator">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>
+                                Send test event
+                            </button>
+                        </div>
+
+                        <div class="toolbar">
+                            <div class="toolbar-actions">
+                                <button class="btn btn-secondary btn-sm" type="button" id="btn-pause" aria-pressed="false">
+                                    <svg id="pause-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect></svg>
+                                    <span id="pause-text">Pause</span>
+                                    <span class="count-badge" id="pause-count" hidden>0</span>
+                                </button>
+                                <button class="btn btn-ghost btn-sm" type="button" id="btn-clear">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                    Clear
+                                </button>
+                            </div>
+
+                            <div class="search-field">
+                                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+                                <input class="input" type="search" id="search-events" placeholder="Filter events…" aria-label="Filter events">
+                                <button class="search-clear" type="button" id="clear-search" aria-label="Clear filter" hidden>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+                                </button>
+                            </div>
+
+                            <span class="event-count" id="event-count" aria-live="polite">0 events</span>
+                        </div>
+
+                        <section class="panel console-panel" aria-labelledby="console-title">
+                            <div class="panel-head console-head">
+                                <div class="console-label">
+                                    <span class="window-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+                                    <span id="console-title">Event stream</span>
+                                </div>
+                                <span class="console-app" id="console-app">—</span>
+                            </div>
+                            <div class="event-stream">
+                                <div class="event-log" id="event-log" role="log" aria-live="off"></div>
+                            </div>
+                        </section>
+                    </section>
+
+                    <!-- ============================================
+                         Overview
+                         ============================================ -->
+                    <section id="view-overview" hidden aria-labelledby="overview-title">
+                        <div class="page-head">
+                            <div>
+                                <p class="eyebrow">Tenant settings</p>
+                                <h1 id="overview-title">Overview</h1>
+                                <p class="page-sub">Credentials and routing for <code id="settings-app-label">—</code>.</p>
+                            </div>
+                        </div>
+
+                        <div class="overview-grid">
+                            <section class="panel" aria-labelledby="credentials-title">
+                                <div class="panel-head">
+                                    <div>
+                                        <h2 id="credentials-title">App credentials</h2>
+                                        <p>Use these values to connect apps and clients.</p>
+                                    </div>
+                                    <span class="badge badge-neutral">read only</span>
+                                </div>
+                                <div class="panel-body credentials-body">
+                                    <div class="credential-list">
+                                        <div class="field">
+                                            <label for="overview-app-id">App ID</label>
+                                            <div class="copy-field">
+                                                <input class="input" id="overview-app-id" type="text" readonly>
+                                                <button class="copy-field-btn" type="button" data-copy-target="overview-app-id">
+                                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                                    <span>Copy</span>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <div class="field">
+                                            <label for="overview-key">Key</label>
+                                            <div class="copy-field">
+                                                <input class="input" id="overview-key" type="text" readonly>
+                                                <button class="copy-field-btn" type="button" data-copy-target="overview-key">
+                                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                                    <span>Copy</span>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <div class="field">
+                                            <label for="overview-secret">Secret</label>
+                                            <div class="copy-field">
+                                                <input class="input" id="overview-secret" type="password" readonly>
+                                                <button class="field-icon-btn" type="button" id="toggle-secret" aria-label="Show secret" aria-pressed="false">
+                                                    <svg class="icon-show" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                                                    <svg class="icon-hide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 3 18 18"></path><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"></path><path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1"></path><path d="M6.2 6.2A17 17 0 0 0 2 12s3.5 7 10 7a10.8 10.8 0 0 0 4.1-.8"></path></svg>
+                                                </button>
+                                                <button class="copy-field-btn" type="button" data-copy-target="overview-secret">
+                                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                                    <span>Copy</span>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <div class="field">
+                                            <label for="overview-host">Pusher URL</label>
+                                            <div class="copy-field">
+                                                <input class="input" id="overview-host" type="text" readonly>
+                                                <button class="copy-field-btn" type="button" data-copy-target="overview-host">
+                                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                                    <span>Copy</span>
+                                                </button>
+                                            </div>
+                                            <p class="field-hint">Public base URL used by third-party apps in production.</p>
+                                        </div>
+                                    </div>
+                                    <p class="credentials-note">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 8h.01"></path></svg>
+                                        <span>Set <code>BROADCAST_CONNECTION=pusher</code>. For production, set <code>host</code> in <code>config.yaml</code> to your public HTTPS URL.</span>
+                                    </p>
+                                </div>
+                            </section>
+
+                            <section class="panel" aria-labelledby="configuration-title">
+                                <div class="panel-head">
+                                    <div>
+                                        <h2 id="configuration-title">Configuration</h2>
+                                        <p>Changes are written to <code>config.yaml</code> and hot-reloaded.</p>
+                                    </div>
+                                </div>
+                                <form class="panel-body config-form" id="config-form">
+                                    <div class="alert alert-error" id="config-save-error" role="alert" hidden>
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg>
+                                        <span id="config-save-error-text"></span>
+                                    </div>
+
+                                    <div class="field">
+                                        <label for="overview-origins">Allowed origins</label>
+                                        <textarea class="textarea" id="overview-origins" rows="4" spellcheck="false"></textarea>
+                                        <p class="field-hint">One origin per line, e.g. <code>https://app.example.com</code>. Leave empty to allow any origin.</p>
+                                    </div>
+
+                                    <div class="field">
+                                        <label for="overview-webhooks">Webhooks</label>
+                                        <textarea class="textarea" id="overview-webhooks" rows="4" spellcheck="false"></textarea>
+                                        <p class="field-hint">One <code>http(s)</code> URL per line, e.g. <code>https://example.com/webhooks/pusher</code>.</p>
+                                    </div>
+
+                                    <div class="panel-actions">
+                                        <button class="btn btn-primary" type="submit" id="btn-save-config">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"></path><path d="M17 21v-8H7v8"></path><path d="M7 3v5h8"></path></svg>
+                                            Save changes
+                                        </button>
+                                    </div>
+                                </form>
+                            </section>
+                        </div>
+
+                        <section class="panel panel-danger" aria-labelledby="danger-title">
+                            <div class="danger-copy">
+                                <div class="danger-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
+                                </div>
+                                <div>
+                                    <h2 id="danger-title">Delete tenant</h2>
+                                    <p>Permanently remove <strong id="danger-app-name">this tenant</strong> and its configuration. Connected clients will be disconnected.</p>
+                                </div>
+                            </div>
+                            <button class="btn btn-danger-outline" type="button" id="btn-delete-tenant">Delete tenant</button>
+                        </section>
+                    </section>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- ====================================================
+         New tenant modal
+         ==================================================== -->
+    <div class="modal" id="tenant-modal" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="tenant-modal-title">
+            <div class="modal-head">
+                <div>
+                    <h2 id="tenant-modal-title">New tenant</h2>
+                    <p>Create an isolated app with its own credentials.</p>
+                </div>
+                <button class="icon-btn" type="button" data-close-modal aria-label="Close dialog">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <form id="tenant-form" novalidate>
+                <div class="modal-body">
+                    <div class="alert alert-error" id="tenant-error" role="alert" hidden>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg>
+                        <span id="tenant-error-text"></span>
+                    </div>
+
+                    <div class="field">
+                        <label for="tenant-app-id">App ID <span class="required">*</span></label>
+                        <input class="input" type="text" id="tenant-app-id" placeholder="e.g. my-app" required pattern="[a-z0-9][a-z0-9-]*[a-z0-9]" autocomplete="off" spellcheck="false" aria-describedby="tenant-app-id-hint">
+                        <p class="field-hint" id="tenant-app-id-hint">2–64 characters. Lowercase letters, digits and hyphens only.</p>
+                        <p class="field-error" id="slug-error" hidden></p>
+                    </div>
+
+                    <p class="modal-note">Keys and secrets are generated automatically when the tenant is created.</p>
+                </div>
+                <div class="modal-foot">
+                    <button class="btn btn-ghost" type="button" data-close-modal>Cancel</button>
+                    <button class="btn btn-primary" type="submit" id="btn-create-tenant">Create tenant</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ====================================================
+         Send event modal
+         ==================================================== -->
+    <div class="modal" id="creator-modal" hidden>
+        <div class="modal-card modal-card-wide" role="dialog" aria-modal="true" aria-labelledby="creator-title">
+            <div class="modal-head">
+                <div>
+                    <h2 id="creator-title">Send test event</h2>
+                    <p>Broadcast an event to any channel on this tenant.</p>
+                </div>
+                <button class="icon-btn" type="button" data-close-modal aria-label="Close dialog">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <form id="creator-form">
+                <div class="modal-body">
+                    <div class="alert alert-error" id="creator-error" role="alert" hidden>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg>
+                        <span id="creator-error-text"></span>
+                    </div>
+
+                    <div class="form-grid">
+                        <div class="field">
+                            <label for="creator-channel">Channel</label>
+                            <input class="input" type="text" id="creator-channel" placeholder="my-channel" value="my-channel" spellcheck="false">
+                        </div>
+                        <div class="field">
+                            <label for="creator-event">Event</label>
+                            <input class="input" type="text" id="creator-event" placeholder="my-event" value="my-event" spellcheck="false">
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label for="creator-data">Data</label>
+                        <textarea class="textarea" id="creator-data" rows="7" spellcheck="false">{"message": "hello world"}</textarea>
+                        <p class="field-hint">Valid JSON is sent as-is. Plain text is sent as a string.</p>
+                    </div>
+                </div>
+                <div class="modal-foot">
+                    <button class="btn btn-ghost" type="button" data-close-modal>Cancel</button>
+                    <button class="btn btn-primary" type="submit" id="btn-send-event">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>
+                        Send event
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ====================================================
+         Delete confirmation modal
+         ==================================================== -->
+    <div class="modal" id="delete-modal" hidden>
+        <div class="modal-card modal-card-confirm" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+            <div class="modal-body">
+                <div class="confirm-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                </div>
+                <h2 id="delete-title">Delete tenant?</h2>
+                <p>This permanently removes <strong id="delete-app-name"></strong> and its configuration. Connected clients will be disconnected.</p>
+                <div class="alert alert-error" id="delete-error" role="alert" hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg>
+                    <span id="delete-error-text"></span>
+                </div>
+            </div>
+            <div class="modal-foot modal-foot-center">
+                <button class="btn btn-ghost" type="button" data-close-modal>Cancel</button>
+                <button class="btn btn-danger" type="button" id="btn-confirm-delete">Delete tenant</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>

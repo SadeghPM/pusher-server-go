@@ -40,7 +40,7 @@ To download, configure, and install Pusher Server Go as a systemd service on Lin
 curl -sSL https://raw.githubusercontent.com/SadeghPM/pusher-server-go/main/install.sh | sudo bash
 ```
 
-The script will automatically download the correct binary for your OS and architecture, prompt you for configuration details, create a `config.yaml` file under `/opt/pusher-clone/config.yaml`, and set up a systemd service to run it.
+The script will automatically download the correct binary for your OS and architecture, prompt you for configuration details (including the public Pusher URL), create a `config.yaml` file under `/opt/pusher-clone/config.yaml`, and set up a systemd service to run it.
 
 ### Method 2: Manual Binary Installation
 
@@ -52,6 +52,7 @@ The script will automatically download the correct binary for your OS and archit
 port: "6001"
 metrics_port: "9601"
 dashboard_port: "5174"
+host: "https://pusher.example.com"
 admin_token: "your-super-secret-admin-token"
 debug: false
 apps:
@@ -62,6 +63,8 @@ apps:
 ```
 
 > [!NOTE]
+> `host` is the public base URL of the Pusher server. It is shown as the **Pusher URL** in each tenant's App credentials so third-party apps can connect in production. Use the full `https://` URL with no path. If omitted, it defaults to `http://localhost:<port>`.
+>
 > If `allowed_origins` is empty or omitted, the server will allow connections from any origin.
 
 4. Run the server binary:
@@ -72,16 +75,20 @@ apps:
 
 ---
 
-## Admin Dashboard
+## Web Interface
 
-The server includes a real-time admin dashboard with a debug console and event creator.
-- **Default URL**: `http://localhost:5174`
-- **Authentication**: Secured using the `admin_token` configured in `config.yaml`.
+The dashboard port serves both the project landing page and the admin control room.
 
-With the dashboard, you can:
-- Track active channels and client connections.
-- View real-time log messages and broadcasted events.
+- **Home**: `http://localhost:5174/`
+- **Admin**: `http://localhost:5174/admin`
+- **Authentication**: Secured using the `admin_token` configured in `config.yaml`. The token is stored in the browser after sign-in.
+
+With the control room, you can:
+- Create, switch and delete tenants without restarting the server.
+- Track active channels and client connections, with pause/resume and filtering for the live event stream.
 - Trigger test events to verify connection state.
+- Copy app credentials — including the public **Pusher URL** from `host` — and edit allowed origins and webhook URLs.
+- Toggle between dark and light themes.
 
 ---
 

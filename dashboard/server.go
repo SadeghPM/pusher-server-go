@@ -94,11 +94,37 @@ func (s *Server) Start(ctx context.Context) {
 	mux.HandleFunc("/api/apps", authMiddleware(s.handleAppsRouter))
 	mux.HandleFunc("/ws", authMiddleware(s.handleWebSocket))
 	mux.HandleFunc("/api/trigger", authMiddleware(s.handleTrigger))
+	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		cfg := s.configManager.GetConfig()
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":     "online",
+			"apps_count": len(cfg.Apps),
+			"port":       cfg.Port,
+			"host":       cfg.Host,
+		})
+	})
+	uiContent, err := fs.Sub(uiFS, "ui")
+	if err != nil {
+		slog.Error("Failed to load dashboard UI assets", "error", err)
+		return
+	}
 
-	mux.Handle("/", http.FileServer(http.FS(func() fs.FS {
-		f, _ := fs.Sub(uiFS, "ui")
-		return f
-	}())))
+	// /admin serves the control room. The landing page lives at /.
+	mux.HandleFunc("/admin", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, uiContent, "admin.html")
+	})
+	mux.HandleFunc("/admin/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin", http.StatusFound)
+	})
+	mux.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin", http.StatusFound)
+	})
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin", http.StatusFound)
+	})
+
+	mux.Handle("/", http.FileServer(http.FS(uiContent)))
 
 	addr := fmt.Sprintf(":%s", port)
 	slog.Info("Starting Dashboard server", "addr", addr)
@@ -143,19 +169,24 @@ func (s *Server) handleAppsRouter(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func appResponse(app config.AppConfig, host string) map[string]interface{} {
+	return map[string]interface{}{
+		"app_id":          app.AppID,
+		"name":            app.AppID,
+		"app_key":         app.AppKey,
+		"app_secret":      app.AppSecret,
+		"allowed_origins": app.AllowedOrigins,
+		"webhooks":        app.Webhooks,
+		"host":            host,
+	}
+}
+
 func (s *Server) handleApps(w http.ResponseWriter, r *http.Request) {
 	cfg := s.configManager.GetConfig()
 	apps := make([]map[string]interface{}, 0)
 
 	for _, app := range cfg.Apps {
-		apps = append(apps, map[string]interface{}{
-			"app_id":          app.AppID,
-			"name":            app.AppID,
-			"app_key":         app.AppKey,
-			"app_secret":      app.AppSecret,
-			"allowed_origins": app.AllowedOrigins,
-			"webhooks":        app.Webhooks,
-		})
+		apps = append(apps, appResponse(app, cfg.Host))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -204,14 +235,7 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"app_id":          created.AppID,
-		"name":            created.AppID,
-		"app_key":         created.AppKey,
-		"app_secret":      created.AppSecret,
-		"allowed_origins": created.AllowedOrigins,
-		"webhooks":        created.Webhooks,
-	})
+	json.NewEncoder(w).Encode(appResponse(*created, s.configManager.GetConfig().Host))
 }
 
 type UpdateAppRequest struct {
@@ -249,14 +273,7 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 	updated := s.configManager.GetAppByID(req.AppID)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"app_id":          updated.AppID,
-		"name":            updated.AppID,
-		"app_key":         updated.AppKey,
-		"app_secret":      updated.AppSecret,
-		"allowed_origins": updated.AllowedOrigins,
-		"webhooks":        updated.Webhooks,
-	})
+	json.NewEncoder(w).Encode(appResponse(*updated, s.configManager.GetConfig().Host))
 }
 
 func (s *Server) handleDeleteApp(w http.ResponseWriter, r *http.Request) {

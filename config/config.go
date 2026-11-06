@@ -5,8 +5,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"regexp"
+	"strings"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -33,6 +35,40 @@ func generateRandomHex(byteLen int) (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// normalizeHost validates and normalizes the public base URL. It requires an
+// absolute http(s) URL with no path (other than an optional trailing slash),
+// query or fragment, and strips a trailing slash.
+func normalizeHost(raw, port string) (string, error) {
+	host := strings.TrimSpace(raw)
+	if host == "" {
+		host = "http://localhost:" + strings.TrimPrefix(port, ":")
+	}
+
+	parsed, err := url.Parse(host)
+	if err != nil {
+		return "", fmt.Errorf("invalid URL %q: %w", raw, err)
+	}
+
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("URL %q must start with http:// or https://", raw)
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("URL %q must include a host", raw)
+	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("URL %q must not include user credentials", raw)
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return "", fmt.Errorf("URL %q must not include a path", raw)
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("URL %q must not include a query string or fragment", raw)
+	}
+
+	return parsed.Scheme + "://" + parsed.Host, nil
+}
+
 type AppConfig struct {
 	AppID          string   `yaml:"app_id"`
 	AppKey         string   `yaml:"app_key"`
@@ -42,12 +78,16 @@ type AppConfig struct {
 }
 
 type Config struct {
-	Port          string      `yaml:"port"`
-	MetricsPort   string      `yaml:"metrics_port"`
-	DashboardPort string      `yaml:"dashboard_port"`
-	AdminToken    string      `yaml:"admin_token"`
-	Debug         bool        `yaml:"debug"`
-	Apps          []AppConfig `yaml:"apps"`
+	Port          string `yaml:"port"`
+	MetricsPort   string `yaml:"metrics_port"`
+	DashboardPort string `yaml:"dashboard_port"`
+	// Host is the public base URL of the Pusher server (for example
+	// https://pusher.example.com). It is shown to third-party app developers
+	// as the Pusher URL. When empty it defaults to http://localhost:<port>.
+	Host       string      `yaml:"host"`
+	AdminToken string      `yaml:"admin_token"`
+	Debug      bool        `yaml:"debug"`
+	Apps       []AppConfig `yaml:"apps"`
 }
 
 type Manager struct {
@@ -105,6 +145,12 @@ func (m *Manager) Reload() error {
 	if cfg.DashboardPort == "" {
 		cfg.DashboardPort = "5174"
 	}
+
+	host, err := normalizeHost(cfg.Host, cfg.Port)
+	if err != nil {
+		return fmt.Errorf("invalid host in config file %q: %w", m.filename, err)
+	}
+	cfg.Host = host
 
 	m.mu.Lock()
 	defer m.mu.Unlock()

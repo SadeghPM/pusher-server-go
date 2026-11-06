@@ -109,6 +109,18 @@ done
 
 echo -e "${GREEN}Using dashboard port ${DASHBOARD_PORT}.${NC}"
 
+read -p "Enter public Pusher URL for third-party apps [http://localhost:${PORT}]: " INPUT_HOST
+HOST=${INPUT_HOST:-http://localhost:${PORT}}
+HOST="${HOST%/}"
+
+while [[ ! "${HOST}" =~ ^https?://[^/]+$ ]]; do
+  echo -e "${RED}Enter a full http(s) URL with no path, e.g. https://pusher.example.com.${NC}"
+  read -p "Public Pusher URL: " HOST
+  HOST="${HOST%/}"
+done
+
+echo -e "${GREEN}Using public Pusher URL ${HOST}.${NC}"
+
 # Default automated config setup
 APP_ID=$(cat /dev/urandom | tr -dc '0-9' | fold -w 6 | head -n 1)
 RANDOM_KEY=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
@@ -121,6 +133,7 @@ cat << YAMLEOF > config.yaml.install.tmp
 port: "${PORT}"
 metrics_port: "${METRICS_PORT}"
 dashboard_port: "${DASHBOARD_PORT}"
+host: "${HOST}"
 admin_token: "${ADMIN_TOKEN}"
 apps:
   - app_id: "${APP_ID}"
