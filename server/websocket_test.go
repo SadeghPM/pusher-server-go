@@ -222,7 +222,7 @@ func TestSubscribePrivateChannelSuccess(t *testing.T) {
 }
 
 func TestSubscribePrivateChannelInvalidSignature(t *testing.T) {
-	ts, _, _, appKey, _ := setupTestServer()
+	ts, _, _, appKey, appSecret := setupTestServer()
 	defer ts.Close()
 
 	ws, _, err := connectWebSocket(ts, appKey)
@@ -232,10 +232,18 @@ func TestSubscribePrivateChannelInvalidSignature(t *testing.T) {
 	defer ws.Close()
 
 	ws.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, _, err = ws.ReadMessage() // Read connection_established
+	_, p, err := ws.ReadMessage() // Read connection_established
 	if err != nil {
 		t.Fatalf("Failed to read connection_established message: %v", err)
 	}
+
+	var connEvent PusherEvent
+	json.Unmarshal(p, &connEvent)
+	var connDataStr string
+	json.Unmarshal(connEvent.Data, &connDataStr)
+	var connData map[string]interface{}
+	json.Unmarshal([]byte(connDataStr), &connData)
+	socketID := connData["socket_id"].(string)
 
 	channelName := "private-my-channel"
 	auth := fmt.Sprintf("%s:invalid-signature", appKey)
@@ -248,7 +256,7 @@ func TestSubscribePrivateChannelInvalidSignature(t *testing.T) {
 	}
 
 	// Wait for error event
-	_, p, err := ws.ReadMessage()
+	_, p, err = ws.ReadMessage()
 	if err != nil {
 		t.Fatalf("Failed to read error message: %v", err)
 	}
@@ -261,6 +269,108 @@ func TestSubscribePrivateChannelInvalidSignature(t *testing.T) {
 
 	if event.Event != "pusher:error" {
 		t.Errorf("Expected event 'pusher:error', got '%s'", event.Event)
+	}
+
+	var dataStr string
+	if err := json.Unmarshal(event.Data, &dataStr); err != nil {
+		t.Fatalf("Expected string-encoded error data, got %s: %v", event.Data, err)
+	}
+
+	// The response must not disclose the expected secret-derived signature.
+	expectedSignature := generateTestAuth(appKey, appSecret, socketID, channelName)
+	if strings.Contains(dataStr, expectedSignature) || strings.Contains(dataStr, socketID+":"+channelName) {
+		t.Errorf("Error response leaked signature material: %s", dataStr)
+	}
+}
+
+func TestSubscribeChannelNameIsJSONEscaped(t *testing.T) {
+	ts, _, _, appKey, _ := setupTestServer()
+	defer ts.Close()
+
+	ws, _, err := connectWebSocket(ts, appKey)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer ws.Close()
+
+	ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, _, err := ws.ReadMessage(); err != nil {
+		t.Fatalf("Failed to read connection_established: %v", err)
+	}
+
+	channelName := `my-"quoted"-channel`
+	message, err := json.Marshal(map[string]any{
+		"event": "pusher:subscribe",
+		"data":  map[string]string{"channel": channelName},
+	})
+	if err != nil {
+		t.Fatalf("Failed to marshal subscribe message: %v", err)
+	}
+	if err := ws.WriteMessage(websocket.TextMessage, message); err != nil {
+		t.Fatalf("Failed to write subscribe message: %v", err)
+	}
+
+	_, payload, err := ws.ReadMessage()
+	if err != nil {
+		t.Fatalf("Failed to read subscription_succeeded: %v", err)
+	}
+	if !json.Valid(payload) {
+		t.Fatalf("Server produced invalid JSON: %s", payload)
+	}
+
+	var event PusherEvent
+	if err := json.Unmarshal(payload, &event); err != nil {
+		t.Fatalf("Failed to unmarshal subscription_succeeded: %v", err)
+	}
+	if event.Channel != channelName {
+		t.Errorf("Expected channel %q, got %q", channelName, event.Channel)
+	}
+}
+
+func TestSubscribePresenceChannelRequiresChannelData(t *testing.T) {
+	ts, _, _, appKey, appSecret := setupTestServer()
+	defer ts.Close()
+
+	ws, _, err := connectWebSocket(ts, appKey)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer ws.Close()
+
+	ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, p, err := ws.ReadMessage()
+	if err != nil {
+		t.Fatalf("Failed to read connection_established: %v", err)
+	}
+
+	var connEvent PusherEvent
+	json.Unmarshal(p, &connEvent)
+	var dataStr string
+	json.Unmarshal(connEvent.Data, &dataStr)
+	var data map[string]interface{}
+	json.Unmarshal([]byte(dataStr), &data)
+	socketID := data["socket_id"].(string)
+
+	channelName := "presence-test"
+	auth := generateTestAuth(appKey, appSecret, socketID, channelName)
+
+	message, _ := json.Marshal(map[string]any{
+		"event": "pusher:subscribe",
+		"data":  map[string]string{"channel": channelName, "auth": auth},
+	})
+	if err := ws.WriteMessage(websocket.TextMessage, message); err != nil {
+		t.Fatalf("Failed to write subscribe message: %v", err)
+	}
+
+	_, payload, err := ws.ReadMessage()
+	if err != nil {
+		t.Fatalf("Failed to read error message: %v", err)
+	}
+
+	var event PusherEvent
+	json.Unmarshal(payload, &event)
+	if event.Event != "pusher:error" {
+		t.Errorf("Expected event 'pusher:error', got %q", event.Event)
 	}
 }
 

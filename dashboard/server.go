@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -72,6 +73,10 @@ func (s *Server) Start(ctx context.Context) {
 	authMiddleware := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			token := s.configManager.GetConfig().AdminToken
+			if token == "" {
+				http.Error(w, "Admin token is not configured", http.StatusServiceUnavailable)
+				return
+			}
 
 			authHeader := r.Header.Get("Authorization")
 			queryToken := r.URL.Query().Get("token")
@@ -83,7 +88,7 @@ func (s *Server) Start(ctx context.Context) {
 				providedToken = queryToken
 			}
 
-			if providedToken != token {
+			if subtle.ConstantTimeCompare([]byte(providedToken), []byte(token)) != 1 {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -130,11 +135,12 @@ func (s *Server) Start(ctx context.Context) {
 	slog.Info("Starting Dashboard server", "addr", addr)
 
 	srv := &http.Server{
-		Addr:         addr,
-		Handler:      mux,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	go func() {
@@ -271,6 +277,10 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updated := s.configManager.GetAppByID(req.AppID)
+	if updated == nil {
+		http.Error(w, "Internal error: app was updated but could not be read back", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(appResponse(*updated, s.configManager.GetConfig().Host))
@@ -304,6 +314,10 @@ func (s *Server) handleDeleteApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Tear down the tenant's hub so connected clients are disconnected and a
+	// recreated app with the same ID starts from a clean state.
+	s.globalHub.RemoveAppHub(req.AppID)
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted", "app_id": req.AppID})
@@ -326,11 +340,47 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	ch := s.observer.Subscribe()
 	defer s.observer.Unsubscribe(ch)
 
-	for event := range ch {
-		if event.AppID == appID {
-			if err := conn.WriteJSON(event); err != nil {
-				break
+	// Read (and discard) client frames so a closed browser tab is noticed and
+	// the subscriber is removed promptly instead of leaking a goroutine.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		conn.SetReadLimit(1024)
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		conn.SetPongHandler(func(string) error {
+			conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+			return nil
+		})
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
 			}
+		}
+	}()
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case event, ok := <-ch:
+			if !ok {
+				return
+			}
+			if event.AppID != appID {
+				continue
+			}
+			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := conn.WriteJSON(event); err != nil {
+				return
+			}
+		case <-ticker.C:
+			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
+		case <-done:
+			return
 		}
 	}
 }
@@ -363,6 +413,11 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Channel == "" || req.Event == "" {
+		http.Error(w, "channel and event are required", http.StatusBadRequest)
+		return
+	}
+
 	appCfg := s.configManager.GetAppByID(req.AppID)
 	if appCfg == nil {
 		http.Error(w, "App not found", http.StatusNotFound)
@@ -380,8 +435,8 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 
 	appHub := s.globalHub.GetOrCreateAppHub(req.AppID)
 	escapedData, _ := json.Marshal(dataStr)
-	message := fmt.Sprintf(`{"event":"%s","channel":"%s","data":%s}`, req.Event, req.Channel, escapedData)
-	appHub.BroadcastToChannel(req.Channel, []byte(message), "")
+	message := core.MarshalEvent(req.Event, req.Channel, escapedData, "")
+	appHub.BroadcastToChannel(req.Channel, message, "")
 	s.globalHub.Debugger.Notify(req.AppID, "api_message", "", req.Channel, req.Event, dataStr)
 
 	w.WriteHeader(http.StatusOK)

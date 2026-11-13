@@ -40,11 +40,11 @@ To download, configure, and install Pusher Server Go as a systemd service on Lin
 curl -sSL https://raw.githubusercontent.com/SadeghPM/pusher-server-go/main/install.sh | sudo bash
 ```
 
-The script will automatically download the correct binary for your OS and architecture, prompt you for configuration details (including the public Pusher URL), create a `config.yaml` file under `/opt/pusher-clone/config.yaml`, and set up a systemd service to run it.
+The script installs the latest Linux x86_64 release, prompts you for configuration details (including the public Pusher URL), creates a `config.yaml` file under `/opt/pusher-clone/config.yaml`, and sets up a systemd service to run it. On other platforms, build from source with `go build .`.
 
 ### Method 2: Manual Binary Installation
 
-1. Download the latest compiled binary for your operating system and architecture from the [GitHub Releases](https://github.com/SadeghPM/pusher-server-go/releases) page.
+1. Download the latest Linux x86_64 binary from the [GitHub Releases](https://github.com/SadeghPM/pusher-server-go/releases) page, or build from source with `go build .`.
 2. Place the binary in your desired installation directory (e.g., `/usr/local/bin` or `/opt/pusher-clone`).
 3. Create a `config.yaml` file in the same directory. Here is an example configuration:
 
