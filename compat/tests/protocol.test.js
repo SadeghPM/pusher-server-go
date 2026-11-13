@@ -468,6 +468,7 @@ describe('presence channels', () => {
     const payload = JSON.parse(error.data);
 
     assert.match(payload.message, /channel_data/i);
+    assert.equal(payload.code, 4009);
   });
 
   test('rejects malformed presence channel_data', async (t) => {
@@ -494,6 +495,7 @@ describe('presence channels', () => {
     const payload = JSON.parse(error.data);
 
     assert.match(payload.message, /Invalid channel_data/i);
+    assert.equal(payload.code, 4009);
   });
 });
 
@@ -604,11 +606,82 @@ describe('REST API', () => {
     assert.equal(response.status, 405);
   });
 
-  // These are intentionally pending until the corresponding server behavior
-  // is implemented or explicitly accepted. See compat/README.md.
-  test.todo('rejects auth_timestamp older than 600 seconds');
-  test.todo('signs additional query parameters as required by the official algorithm');
-  test.todo('enforces the 10 KB event data limit');
+  test('rejects auth_timestamp outside the 600 second window', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const body = JSON.stringify({
+      name: 'stale-event',
+      channel: channelName('rest-stale'),
+      data: '{}',
+    });
+
+    for (const timestamp of [now - 601, now + 601]) {
+      const signed = buildSignedRequest({
+        baseUrl: server.baseUrl,
+        appId: 'compat-app',
+        key: 'compat-key',
+        secret: 'compat-secret',
+        body,
+        timestamp,
+      });
+
+      const response = await fetch(signed.url, { method: 'POST', body });
+
+      assert.equal(response.status, 401);
+      assert.match(await response.text(), /timestamp/i);
+    }
+  });
+
+  test('signs every query parameter and rejects tampering', async () => {
+    const body = JSON.stringify({
+      name: 'extra-param-event',
+      channel: channelName('rest-extra-param'),
+      data: '{}',
+    });
+    const signed = buildSignedRequest({
+      baseUrl: server.baseUrl,
+      appId: 'compat-app',
+      key: 'compat-key',
+      secret: 'compat-secret',
+      body,
+      extraParams: { info: 'user_count' },
+    });
+
+    const accepted = await fetch(signed.url, { method: 'POST', body });
+    assert.equal(accepted.status, 200);
+
+    const tamperedUrl = new URL(signed.url);
+    tamperedUrl.searchParams.set('info', 'subscription_count');
+    const rejected = await fetch(tamperedUrl, { method: 'POST', body });
+
+    assert.equal(rejected.status, 401);
+    assert.match(await rejected.text(), /Invalid signature/i);
+  });
+
+  test('enforces the 10,000 character event data limit', async () => {
+    const sendWithDataLength = (length) => {
+      const body = JSON.stringify({
+        name: 'size-limit',
+        channel: channelName('rest-size'),
+        data: 'x'.repeat(length),
+      });
+      const signed = buildSignedRequest({
+        baseUrl: server.baseUrl,
+        appId: 'compat-app',
+        key: 'compat-key',
+        secret: 'compat-secret',
+        body,
+      });
+
+      return fetch(signed.url, { method: 'POST', body });
+    };
+
+    const accepted = await sendWithDataLength(10000);
+    assert.equal(accepted.status, 200);
+
+    const rejected = await sendWithDataLength(10001);
+    assert.equal(rejected.status, 413);
+    assert.match(await rejected.text(), /10k/i);
+  });
 });
 
 describe('webhooks', () => {
@@ -697,6 +770,7 @@ describe('protocol edge cases', () => {
     const payload = JSON.parse(error.data);
 
     assert.match(payload.message, /Invalid signature/i);
+    assert.equal(payload.code, 4009);
   });
 
   test('ignores unknown events and keeps the connection usable', async (t) => {

@@ -24,6 +24,10 @@ const (
 	pongWait       = 120 * time.Second
 	pingPeriod     = 60 * time.Second
 	maxMessageSize = 8192
+
+	// errorCodeUnauthorized is the Pusher protocol code for authentication
+	// failures. See the Pusher Channels Protocol documentation.
+	errorCodeUnauthorized = 4009
 )
 
 type PusherEvent struct {
@@ -269,13 +273,13 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appKey 
 
 		if isPresence {
 			if subData.ChannelData == "" {
-				s.sendError(client, "Presence channels require channel_data.")
+				s.sendError(client, errorCodeUnauthorized, "Presence channels require channel_data.")
 				return
 			}
 
 			var presenceData ChannelData
 			if err := json.Unmarshal([]byte(subData.ChannelData), &presenceData); err != nil || presenceData.UserID == "" {
-				s.sendError(client, "Invalid channel_data for presence channel.")
+				s.sendError(client, errorCodeUnauthorized, "Invalid channel_data for presence channel.")
 				return
 			}
 
@@ -339,20 +343,20 @@ func (s *Server) verifySubscriptionSignature(client *core.Client, subData Pusher
 
 		// Never echo the expected signature back to the client or into logs:
 		// it is a secret-derived value and would make signature forgery easier.
-		s.sendError(client, "Invalid signature.")
+		s.sendError(client, errorCodeUnauthorized, "Invalid signature.")
 		return false
 	}
 	return true
 }
 
 // sendError sends a Pusher error event with a serialized error object as data.
-func (s *Server) sendError(client *core.Client, message string) {
+func (s *Server) sendError(client *core.Client, code int, message string) {
 	payload := core.MarshalEvent(
 		"pusher:error",
 		"",
 		core.EncodeDataString(map[string]any{
 			"message": message,
-			"code":    nil,
+			"code":    code,
 		}),
 		"",
 	)

@@ -56,23 +56,20 @@ Useful environment variables:
 - Presence `channel_data` validation
 - REST auth success/failure, body MD5 mismatch, unknown app, method checks
 - Official HTTP API example credentials
+- `auth_timestamp` replay window (600 seconds)
+- Signing of all query parameters, including tamper detection
+- 10 KB event data limit
+- Numeric `pusher:error` codes
 - Webhook `channel_occupied` / `channel_vacated` / `member_added` /
   `member_removed`, including `X-Pusher-Signature` verification
 - Invalid JSON and unknown-event resilience
 
-## Known gaps
+## Out of scope
 
-The following are marked as TODO in the test suite because they document
-behavior that is not currently implemented. They are intentionally not failing
-the suite, so they can be reviewed before changing server behavior:
-
-- `auth_timestamp` is not checked against a replay window. The official HTTP
-  API specifies a 600-second window.
-- REST signature verification only reconstructs the four auth query parameters.
-  The official algorithm signs **all** query parameters, sorted by key.
-- The 10 KB event `data` limit from the official HTTP API is not enforced.
-- `pusher:error` payloads currently use `"code": null` instead of a numeric
-  error code.
+- Dashboard and admin HTTP APIs
+- Reconnection and automatic resubscription
+- Rate limits and connection quotas
+- Encrypted channels and user sign-in / watchlist events
 
 ## Why not run the official `pusher-js` integration tests directly?
 
