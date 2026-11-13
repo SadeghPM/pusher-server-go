@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -340,6 +341,76 @@ func TestHandleEventsAppNotFound(t *testing.T) {
 	if status := rr.Code; status != http.StatusNotFound {
 		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusNotFound)
 	}
+}
+
+func TestHandleEventsValidation(t *testing.T) {
+	cfg := &config.Config{
+		Port: "6001",
+		Apps: []config.AppConfig{
+			{
+				AppID:     "123",
+				AppKey:    "test-key",
+				AppSecret: "test-secret",
+			},
+		},
+	}
+	globalHub := core.NewGlobalHub(nil, nil)
+	api := NewAPI(globalHub, config.NewManagerFromConfig(cfg))
+
+	tooManyChannels := make([]string, 101)
+	for i := range tooManyChannels {
+		tooManyChannels[i] = "channel-" + fmt.Sprint(i)
+	}
+	tooManyBody, err := json.Marshal(TriggerPayload{
+		Name:     "my-event",
+		Channels: tooManyChannels,
+		Data:     "{}",
+	})
+	if err != nil {
+		t.Fatalf("Failed to marshal payload: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		body []byte
+	}{
+		{"missing event name", []byte(`{"channel":"my-channel","data":"{}"}`)},
+		{"missing channels", []byte(`{"name":"my-event","data":"{}"}`)},
+		{"too many channels", tooManyBody},
+		{"empty channel", []byte(`{"name":"my-event","channel":"","data":"{}"}`)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := signedEventsRequest(tc.body, "test-key", "test-secret")
+			rr := httptest.NewRecorder()
+			api.HandleEvents(rr, req, "123")
+
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("Expected status %d, got %d: %s", http.StatusBadRequest, rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func signedEventsRequest(body []byte, appKey, appSecret string) *http.Request {
+	hasher := md5.New()
+	hasher.Write(body)
+	bodyMD5 := hex.EncodeToString(hasher.Sum(nil))
+
+	authTimestamp := "1234567890"
+	authVersion := "1.0"
+	queryParams := fmt.Sprintf("auth_key=%s&auth_timestamp=%s&auth_version=%s&body_md5=%s", appKey, authTimestamp, authVersion, bodyMD5)
+	stringToSign := fmt.Sprintf("POST\n/apps/123/events\n%s", queryParams)
+
+	mac := hmac.New(sha256.New, []byte(appSecret))
+	mac.Write([]byte(stringToSign))
+	authSignature := hex.EncodeToString(mac.Sum(nil))
+
+	url := fmt.Sprintf("/apps/123/events?auth_key=%s&auth_timestamp=%s&auth_version=%s&body_md5=%s&auth_signature=%s",
+		appKey, authTimestamp, authVersion, bodyMD5, authSignature)
+
+	return httptest.NewRequest("POST", url, bytes.NewBuffer(body))
 }
 
 type errReader int

@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/md5"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -81,21 +82,40 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 		return
 	}
 
-	// Gather channels
-	channels := payload.Channels
+	if payload.Name == "" || len(payload.Name) > 200 {
+		http.Error(w, "Invalid event name", http.StatusBadRequest)
+		return
+	}
+
+	// Gather channels without mutating the decoded slice.
+	channels := append([]string(nil), payload.Channels...)
 	if payload.Channel != "" {
 		channels = append(channels, payload.Channel)
+	}
+	if len(channels) == 0 || len(channels) > 100 {
+		http.Error(w, "Invalid channels", http.StatusBadRequest)
+		return
+	}
+	for _, channel := range channels {
+		if channel == "" || len(channel) > 200 {
+			http.Error(w, "Invalid channels", http.StatusBadRequest)
+			return
+		}
 	}
 
 	// 3. Broadcast to WebSockets
 	appHub := a.globalHub.GetOrCreateAppHub(appID)
 
-	// Construct the WebSocket event message
-	escapedData, _ := json.Marshal(payload.Data)
+	// Construct the WebSocket event message.
+	escapedData, err := json.Marshal(payload.Data)
+	if err != nil {
+		http.Error(w, "Invalid data", http.StatusBadRequest)
+		return
+	}
 
 	for _, channel := range channels {
-		message := fmt.Sprintf(`{"event":"%s","channel":"%s","data":%s}`, payload.Name, channel, escapedData)
-		appHub.BroadcastToChannel(channel, []byte(message), payload.SocketID)
+		message := core.MarshalEvent(payload.Name, channel, escapedData, "")
+		appHub.BroadcastToChannel(channel, message, payload.SocketID)
 	}
 
 	metrics.RestAPIEventsTotal.WithLabelValues(appID).Inc()
@@ -105,7 +125,7 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 	}
 
 	// Respond with success
-	slog.Info("Broadcasted event via REST API",
+	slog.Debug("Broadcasted event via REST API",
 		"app_id", appID,
 		"event", payload.Name,
 		"channels", channels,
@@ -123,7 +143,7 @@ func authenticateRequest(r *http.Request, body []byte, appCfg *config.AppConfig)
 	bodyMD5 := r.URL.Query().Get("body_md5")
 	authSignature := r.URL.Query().Get("auth_signature")
 
-	if authKey != appCfg.AppKey {
+	if subtle.ConstantTimeCompare([]byte(authKey), []byte(appCfg.AppKey)) != 1 {
 		return errors.New("Unauthorized")
 	}
 

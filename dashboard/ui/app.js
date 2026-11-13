@@ -159,9 +159,12 @@
        ============================================================ */
 
     function escapeHtml(value) {
-        const div = document.createElement('div');
-        div.textContent = value == null ? '' : String(value);
-        return div.innerHTML;
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function activeApp() {
@@ -1110,7 +1113,6 @@
             if (state.apps.length > 0) {
                 const nextApp = state.apps[0];
                 selectApp(nextApp.app_id, { connect: true, resetStream: true });
-                if (state.view === 'overview') renderOverview();
             } else {
                 state.activeAppId = null;
                 storageRemove(ACTIVE_APP_KEY);

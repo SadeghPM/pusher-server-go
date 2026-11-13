@@ -9,7 +9,9 @@ apps:
     app_key: "my-app-key-1"
     app_secret: "my-app-secret-1"
     allowed_origins: ["*"]
+    webhooks: []
   - app_id: "my-app-id-2"
     app_key: "my-app-key-2"
     app_secret: "my-app-secret-2"
     allowed_origins: ["http://localhost:3000", "https://example.com"]
+    webhooks: ["https://example.com/pusher/webhook"]

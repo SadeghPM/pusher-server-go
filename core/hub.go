@@ -21,7 +21,10 @@ type AppHub struct {
 	clients    map[string]*Client
 	channels   map[string]map[*Client]*ChannelMember
 	dispatcher WebhookDispatcher
-	workQueue  chan func()
+
+	workMu    sync.RWMutex
+	workQueue chan func()
+	closed    bool
 }
 
 func NewAppHub(appID string, dispatcher WebhookDispatcher) *AppHub {
@@ -46,9 +49,33 @@ func NewAppHub(appID string, dispatcher WebhookDispatcher) *AppHub {
 	return h
 }
 
-// Close drains and shuts down the work queue. Call on graceful shutdown.
+// Close shuts down the work queue and closes each client connection. The
+// clients' read pumps then unregister themselves, which keeps channel and
+// connection metrics consistent. It is safe to call more than once.
 func (h *AppHub) Close() {
+	h.workMu.Lock()
+	if h.closed {
+		h.workMu.Unlock()
+		return
+	}
+	h.closed = true
 	close(h.workQueue)
+	h.workMu.Unlock()
+
+	h.mu.RLock()
+	clients := make([]*Client, 0, len(h.clients))
+	for _, client := range h.clients {
+		clients = append(clients, client)
+	}
+	h.mu.RUnlock()
+
+	// Close the underlying connections rather than Send channels: the read
+	// pump may still be handling a message and writing to Send.
+	for _, client := range clients {
+		if client.Conn != nil {
+			client.Conn.Close()
+		}
+	}
 }
 
 // AppID returns the application identifier for this hub.
@@ -56,8 +83,16 @@ func (h *AppHub) AppID() string {
 	return h.appID
 }
 
-// enqueue sends work to the bounded worker pool. Drops if full.
+// enqueue sends work to the bounded worker pool. Drops if full or if the hub
+// has been closed. The read lock prevents a send on a closed work queue.
 func (h *AppHub) enqueue(fn func()) {
+	h.workMu.RLock()
+	defer h.workMu.RUnlock()
+
+	if h.closed {
+		return
+	}
+
 	select {
 	case h.workQueue <- fn:
 	default:
@@ -98,7 +133,7 @@ func (h *AppHub) UnregisterClient(client *Client) {
 		for _, channelName := range channelsToRemove {
 			h.removeClientFromChannel(client, channelName)
 		}
-		close(client.Send)
+		client.CloseSend()
 	}
 }
 
@@ -134,7 +169,12 @@ func (h *AppHub) removeClientFromChannel(client *Client, channel string) {
 			}
 		}
 		if !hasOtherConnections {
-			payload := []byte(`{"event":"pusher_internal:member_removed","channel":"` + channel + `","data":"{\"user_id\":\"` + member.UserID + `\"}"}`)
+			payload := MarshalEvent(
+				"pusher_internal:member_removed",
+				channel,
+				EncodeDataString(map[string]string{"user_id": member.UserID}),
+				"",
+			)
 			h.enqueue(func() { h.BroadcastToChannel(channel, payload, "") })
 
 			h.DispatchWebhook([]WebhookEvent{
@@ -273,6 +313,20 @@ func (gh *GlobalHub) GetAppHub(appID string) *AppHub {
 	defer gh.mu.RUnlock()
 
 	return gh.AppHubs[appID]
+}
+
+// RemoveAppHub disconnects all clients and removes the hub for an app. It is
+// used when a tenant is deleted so a recreated app cannot inherit stale
+// connections or goroutines.
+func (gh *GlobalHub) RemoveAppHub(appID string) {
+	gh.mu.Lock()
+	hub := gh.AppHubs[appID]
+	delete(gh.AppHubs, appID)
+	gh.mu.Unlock()
+
+	if hub != nil {
+		hub.Close()
+	}
 }
 
 // Close shuts down all AppHub work queues. Call on graceful shutdown.

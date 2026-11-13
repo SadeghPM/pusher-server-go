@@ -1,7 +1,9 @@
 package core
 
 import (
+	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestAppHubRegistration(t *testing.T) {
@@ -44,6 +46,87 @@ func TestAppHubUnsubscribeNonExistentChannel(t *testing.T) {
 	if len(hub.channels) != 0 {
 		t.Errorf("Expected 0 channels, got %d", len(hub.channels))
 	}
+}
+
+func TestAppHubUnsubscribeBroadcastsMemberRemoved(t *testing.T) {
+	hub := NewAppHub("test-app", nil)
+	defer hub.Close()
+
+	client1 := &Client{SocketID: "123.1", Send: make(chan []byte, 4)}
+	client2 := &Client{SocketID: "123.2", Send: make(chan []byte, 4)}
+	hub.RegisterClient(client1)
+	hub.RegisterClient(client2)
+
+	const channel = `presence-"chat"`
+	hub.Subscribe(client1, channel, &ChannelMember{UserID: `user-"one"`})
+	hub.Subscribe(client2, channel, &ChannelMember{UserID: "user-two"})
+
+	hub.Unsubscribe(client1, channel)
+
+	select {
+	case payload := <-client2.Send:
+		if !json.Valid(payload) {
+			t.Fatalf("member_removed payload is invalid JSON: %s", payload)
+		}
+
+		var event Event
+		if err := json.Unmarshal(payload, &event); err != nil {
+			t.Fatalf("Failed to unmarshal member_removed: %v", err)
+		}
+		if event.Event != "pusher_internal:member_removed" {
+			t.Errorf("Unexpected event: %q", event.Event)
+		}
+		if event.Channel != channel {
+			t.Errorf("Unexpected channel: %q", event.Channel)
+		}
+
+		var dataStr string
+		if err := json.Unmarshal(event.Data, &dataStr); err != nil {
+			t.Fatalf("Expected string-encoded data, got %s: %v", event.Data, err)
+		}
+		var data map[string]string
+		if err := json.Unmarshal([]byte(dataStr), &data); err != nil {
+			t.Fatalf("Failed to unmarshal member_removed data: %v", err)
+		}
+		if data["user_id"] != `user-"one"` {
+			t.Errorf("Unexpected user_id: %q", data["user_id"])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Timed out waiting for member_removed broadcast")
+	}
+}
+
+func TestAppHubCloseIsIdempotent(t *testing.T) {
+	hub := NewAppHub("test-app", nil)
+
+	hub.Close()
+	hub.Close()
+
+	// Enqueueing after close must not panic or block.
+	hub.enqueue(func() {})
+
+	if len(hub.clients) != 0 {
+		t.Errorf("Expected no clients after close, got %d", len(hub.clients))
+	}
+}
+
+func TestGlobalHubRemoveAppHub(t *testing.T) {
+	global := NewGlobalHub(nil, nil)
+	hub := global.GetOrCreateAppHub("app1")
+
+	global.RemoveAppHub("app1")
+	global.RemoveAppHub("app1") // must be idempotent
+
+	if global.GetAppHub("app1") != nil {
+		t.Fatal("Expected app hub to be removed")
+	}
+
+	// A new hub must not reuse the closed instance.
+	replacement := global.GetOrCreateAppHub("app1")
+	if replacement == hub {
+		t.Fatal("Expected a fresh app hub after removal")
+	}
+	replacement.Close()
 }
 
 func TestGlobalHub(t *testing.T) {

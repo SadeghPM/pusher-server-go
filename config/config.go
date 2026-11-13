@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -107,9 +109,69 @@ func NewManager(filename string) (*Manager, error) {
 }
 
 func NewManagerFromConfig(cfg *Config) *Manager {
-	m := &Manager{config: cfg}
+	if cfg == nil {
+		cfg = &Config{}
+	}
+	m := &Manager{config: cloneConfig(cfg)}
 	m.buildMaps()
 	return m
+}
+
+func cloneStrings(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	cloned := make([]string, len(values))
+	copy(cloned, values)
+	return cloned
+}
+
+func cloneApps(apps []AppConfig) []AppConfig {
+	cloned := make([]AppConfig, len(apps))
+	for i, app := range apps {
+		cloned[i] = app
+		cloned[i].AllowedOrigins = cloneStrings(app.AllowedOrigins)
+		cloned[i].Webhooks = cloneStrings(app.Webhooks)
+	}
+	return cloned
+}
+
+func cloneConfig(cfg *Config) *Config {
+	if cfg == nil {
+		return nil
+	}
+	cloned := *cfg
+	cloned.Apps = cloneApps(cfg.Apps)
+	return &cloned
+}
+
+// validateConfig rejects configurations that would make tenant lookups
+// ambiguous or let a connection authenticate against an empty key.
+func validateConfig(cfg *Config) error {
+	seenIDs := make(map[string]struct{}, len(cfg.Apps))
+	seenKeys := make(map[string]struct{}, len(cfg.Apps))
+
+	for i, app := range cfg.Apps {
+		if app.AppID == "" {
+			return fmt.Errorf("apps[%d]: app_id is required", i)
+		}
+		if app.AppKey == "" {
+			return fmt.Errorf("app %q: app_key is required", app.AppID)
+		}
+		if app.AppSecret == "" {
+			return fmt.Errorf("app %q: app_secret is required", app.AppID)
+		}
+		if _, exists := seenIDs[app.AppID]; exists {
+			return fmt.Errorf("duplicate app_id %q", app.AppID)
+		}
+		if _, exists := seenKeys[app.AppKey]; exists {
+			return fmt.Errorf("duplicate app_key for app %q", app.AppID)
+		}
+		seenIDs[app.AppID] = struct{}{}
+		seenKeys[app.AppKey] = struct{}{}
+	}
+
+	return nil
 }
 
 func (m *Manager) buildMaps() {
@@ -152,8 +214,17 @@ func (m *Manager) Reload() error {
 	}
 	cfg.Host = host
 
+	if err := validateConfig(&cfg); err != nil {
+		return fmt.Errorf("invalid config file %q: %w", m.filename, err)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if m.config != nil && reflect.DeepEqual(m.config, &cfg) {
+		return nil
+	}
+
 	m.config = &cfg
 	m.buildMaps()
 
@@ -182,9 +253,10 @@ func (m *Manager) GetAppByKey(appKey string) *AppConfig {
 func (m *Manager) GetAllApps() []AppConfig {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	apps := make([]AppConfig, len(m.config.Apps))
-	copy(apps, m.config.Apps)
-	return apps
+	if m.config == nil {
+		return nil
+	}
+	return cloneApps(m.config.Apps)
 }
 
 // AddApp adds a new app to the configuration, rebuilds the lookup maps,
@@ -232,14 +304,17 @@ func (m *Manager) AddApp(app AppConfig) error {
 		return fmt.Errorf("app with key %q already exists", app.AppKey)
 	}
 
-	m.config.Apps = append(m.config.Apps, app)
-	m.buildMaps()
+	base := m.config
+	if base == nil {
+		base = &Config{}
+	}
+	next := cloneConfig(base)
+	app.AllowedOrigins = cloneStrings(app.AllowedOrigins)
+	app.Webhooks = cloneStrings(app.Webhooks)
+	next.Apps = append(next.Apps, app)
 
-	// Persist to disk
-	if m.filename != "" {
-		if err := m.saveConfigLocked(); err != nil {
-			return fmt.Errorf("failed to save config: %w", err)
-		}
+	if err := m.commitConfigLocked(next); err != nil {
+		return err
 	}
 
 	slog.Info("New app added", "app_id", app.AppID, "app_key", app.AppKey)
@@ -254,13 +329,16 @@ func (m *Manager) UpdateApp(appID string, allowedOrigins []string, webhooks []st
 	if appID == "" {
 		return fmt.Errorf("app_id is required")
 	}
+	if m.config == nil {
+		return fmt.Errorf("app with id %q not found", appID)
+	}
 
-	// Find the app in the slice
+	next := cloneConfig(m.config)
 	found := false
-	for i := range m.config.Apps {
-		if m.config.Apps[i].AppID == appID {
-			m.config.Apps[i].AllowedOrigins = allowedOrigins
-			m.config.Apps[i].Webhooks = webhooks
+	for i := range next.Apps {
+		if next.Apps[i].AppID == appID {
+			next.Apps[i].AllowedOrigins = cloneStrings(allowedOrigins)
+			next.Apps[i].Webhooks = cloneStrings(webhooks)
 			found = true
 			break
 		}
@@ -270,13 +348,8 @@ func (m *Manager) UpdateApp(appID string, allowedOrigins []string, webhooks []st
 		return fmt.Errorf("app with id %q not found", appID)
 	}
 
-	m.buildMaps()
-
-	// Persist to disk
-	if m.filename != "" {
-		if err := m.saveConfigLocked(); err != nil {
-			return fmt.Errorf("failed to save config: %w", err)
-		}
+	if err := m.commitConfigLocked(next); err != nil {
+		return err
 	}
 
 	slog.Info("App updated", "app_id", appID)
@@ -292,40 +365,78 @@ func (m *Manager) DeleteApp(appID string) error {
 	if appID == "" {
 		return fmt.Errorf("app_id is required")
 	}
+	if m.config == nil {
+		return fmt.Errorf("app with id %q not found", appID)
+	}
 
 	if _, exists := m.appsByID[appID]; !exists {
 		return fmt.Errorf("app with id %q not found", appID)
 	}
 
-	// Remove from the slice
+	// Build the next immutable snapshot.
 	newApps := make([]AppConfig, 0, len(m.config.Apps)-1)
 	for _, app := range m.config.Apps {
 		if app.AppID != appID {
 			newApps = append(newApps, app)
 		}
 	}
-	m.config.Apps = newApps
-	m.buildMaps()
+	next := cloneConfig(m.config)
+	next.Apps = newApps
 
-	// Persist to disk
-	if m.filename != "" {
-		if err := m.saveConfigLocked(); err != nil {
-			return fmt.Errorf("failed to save config: %w", err)
-		}
+	if err := m.commitConfigLocked(next); err != nil {
+		return err
 	}
 
 	slog.Info("App deleted", "app_id", appID)
 	return nil
 }
 
-// saveConfigLocked writes the current config to the file. Must be called with m.mu held.
-func (m *Manager) saveConfigLocked() error {
-	data, err := yaml.Marshal(m.config)
+// commitConfigLocked persists next and only publishes it in memory after the
+// write succeeds. Must be called with m.mu held.
+func (m *Manager) commitConfigLocked(next *Config) error {
+	if m.filename != "" {
+		if err := m.saveConfigLocked(next); err != nil {
+			return fmt.Errorf("failed to save config: %w", err)
+		}
+	}
+	m.config = next
+	m.buildMaps()
+	return nil
+}
+
+// saveConfigLocked writes cfg to disk atomically with private permissions.
+// Must be called with m.mu held.
+func (m *Manager) saveConfigLocked(cfg *Config) error {
+	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
-	if err := os.WriteFile(m.filename, data, 0644); err != nil {
+
+	dir := filepath.Dir(m.filename)
+	tmp, err := os.CreateTemp(dir, ".config-*.yaml")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary config file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return fmt.Errorf("failed to set config permissions: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
 		return fmt.Errorf("failed to write config file %q: %w", m.filename, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("failed to sync config file %q: %w", m.filename, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close config file %q: %w", m.filename, err)
+	}
+	if err := os.Rename(tmpName, m.filename); err != nil {
+		return fmt.Errorf("failed to replace config file %q: %w", m.filename, err)
 	}
 	return nil
 }

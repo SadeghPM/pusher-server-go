@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -23,11 +25,14 @@ import (
 )
 
 func main() {
+	configPath := flag.String("config", "config.yaml", "path to the YAML configuration file")
+	flag.Parse()
+
 	// Root context cancelled on SIGINT/SIGTERM for graceful shutdown.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	manager, err := config.NewManager("config.yaml")
+	manager, err := config.NewManager(*configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 		os.Exit(1)
@@ -46,7 +51,9 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 
-	// Setup Hot-Reload via File Watcher using fsnotify
+	// Setup Hot-Reload via File Watcher using fsnotify. Watch the containing
+	// directory rather than the file itself so editors that save by renaming
+	// (and atomic config writes) keep working.
 	go func() {
 		watcher, err := fsnotify.NewWatcher()
 		if err != nil {
@@ -55,9 +62,30 @@ func main() {
 		}
 		defer watcher.Close()
 
-		if err := watcher.Add("config.yaml"); err != nil {
-			slog.Error("Failed to add config.yaml to file watcher", "error", err)
+		configDir := filepath.Dir(*configPath)
+		configBase := filepath.Base(*configPath)
+
+		if err := watcher.Add(configDir); err != nil {
+			slog.Error("Failed to watch configuration directory", "dir", configDir, "error", err)
 			return
+		}
+
+		applyLogLevel := func(cfg *config.Config) {
+			if cfg.Debug {
+				logLevel.Set(slog.LevelDebug)
+			} else {
+				logLevel.Set(slog.LevelInfo)
+			}
+		}
+
+		var reloadTimer *time.Timer
+		var reloadC <-chan time.Time
+		scheduleReload := func() {
+			if reloadTimer != nil {
+				reloadTimer.Stop()
+			}
+			reloadTimer = time.NewTimer(200 * time.Millisecond)
+			reloadC = reloadTimer.C
 		}
 
 		for {
@@ -68,18 +96,20 @@ func main() {
 				if !ok {
 					return
 				}
-				if event.Has(fsnotify.Write) {
-					slog.Info("Detected config.yaml change via fsnotify, auto-reloading configuration")
-					if err := manager.Reload(); err != nil {
-						slog.Error("Failed to auto-reload configuration", "error", err)
-					} else {
-						if manager.GetConfig().Debug {
-							logLevel.Set(slog.LevelDebug)
-						} else {
-							logLevel.Set(slog.LevelInfo)
-						}
-					}
+				if filepath.Base(event.Name) != configBase {
+					continue
 				}
+				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) {
+					scheduleReload()
+				}
+			case <-reloadC:
+				reloadC = nil
+				slog.Info("Detected config change, auto-reloading configuration", "filename", *configPath)
+				if err := manager.Reload(); err != nil {
+					slog.Error("Failed to auto-reload configuration", "error", err)
+					continue
+				}
+				applyLogLevel(manager.GetConfig())
 			case err, ok := <-watcher.Errors:
 				if !ok {
 					return
@@ -138,10 +168,11 @@ func main() {
 	slog.Info("Starting Prometheus metrics server", "addr", metricsAddr)
 
 	metricsSrv := &http.Server{
-		Addr:         metricsAddr,
-		Handler:      metricsMux,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		Addr:              metricsAddr,
+		Handler:           metricsMux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
 	}
 	go func() {
 		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -153,11 +184,12 @@ func main() {
 	slog.Info("Starting Multi-Tenant Pusher clone server", "addr", addr)
 
 	mainSrv := &http.Server{
-		Addr:         addr,
-		Handler:      mux,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 	go func() {
 		if err := mainSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

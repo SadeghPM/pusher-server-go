@@ -572,6 +572,85 @@ apps:
 	}
 }
 
+func TestManager_ReloadRejectsInvalidApps(t *testing.T) {
+	tests := []struct {
+		name string
+		apps string
+	}{
+		{
+			name: "duplicate app_id",
+			apps: `
+  - app_id: "app1"
+    app_key: "key1"
+    app_secret: "secret1"
+  - app_id: "app1"
+    app_key: "key2"
+    app_secret: "secret2"`,
+		},
+		{
+			name: "duplicate app_key",
+			apps: `
+  - app_id: "app1"
+    app_key: "key1"
+    app_secret: "secret1"
+  - app_id: "app2"
+    app_key: "key1"
+    app_secret: "secret2"`,
+		},
+		{
+			name: "missing app_key",
+			apps: `
+  - app_id: "app1"
+    app_secret: "secret1"`,
+		},
+		{
+			name: "missing app_secret",
+			apps: `
+  - app_id: "app1"
+    app_key: "key1"`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tempFile := filepath.Join(t.TempDir(), "config.yaml")
+			configData := []byte("port: \"6001\"\napps:" + tc.apps + "\n")
+			if err := os.WriteFile(tempFile, configData, 0644); err != nil {
+				t.Fatalf("Failed to write temp config file: %v", err)
+			}
+
+			if _, err := NewManager(tempFile); err == nil {
+				t.Fatal("Expected NewManager to reject the invalid config")
+			}
+		})
+	}
+}
+
+func TestManager_UpdateAppCopiesInputSlices(t *testing.T) {
+	manager := NewManagerFromConfig(&Config{
+		Apps: []AppConfig{
+			{AppID: "app1", AppKey: "key1", AppSecret: "secret1"},
+		},
+	})
+
+	origins := []string{"https://one.example.com"}
+	webhooks := []string{"https://hooks.example.com"}
+	if err := manager.UpdateApp("app1", origins, webhooks); err != nil {
+		t.Fatalf("Expected UpdateApp to succeed, got error: %v", err)
+	}
+
+	origins[0] = "https://mutated.example.com"
+	webhooks[0] = "https://mutated.example.com"
+
+	app := manager.GetAppByID("app1")
+	if app.AllowedOrigins[0] != "https://one.example.com" {
+		t.Errorf("AllowedOrigins was mutated through the input slice: %v", app.AllowedOrigins)
+	}
+	if app.Webhooks[0] != "https://hooks.example.com" {
+		t.Errorf("Webhooks was mutated through the input slice: %v", app.Webhooks)
+	}
+}
+
 func TestManager_UpdateApp_NotFound(t *testing.T) {
 	manager := NewManagerFromConfig(&Config{})
 
