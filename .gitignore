@@ -2,3 +2,4 @@ main
 pusher-server
 pusher-clone
 pusher-server-go
+/config.yaml
