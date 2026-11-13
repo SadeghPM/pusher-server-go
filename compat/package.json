@@ -1,0 +1,15 @@
+{
+  "name": "pusher-server-go-compat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Black-box Pusher Protocol v7 compatibility tests using the official pusher-js and pusher SDKs.",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 tests/protocol.test.js"
+  },
+  "dependencies": {
+    "pusher": "^5.3.4",
+    "pusher-js": "^8.6.0",
+    "ws": "^8.23.0"
+  }
+}
