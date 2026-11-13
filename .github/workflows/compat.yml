@@ -1,0 +1,40 @@
+name: compat
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  compat:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: compat/package-lock.json
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Install compatibility test dependencies
+        working-directory: compat
+        run: npm ci
+
+      - name: Run Pusher Protocol v7 compatibility tests
+        working-directory: compat
+        run: npm test
