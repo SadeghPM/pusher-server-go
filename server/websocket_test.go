@@ -281,6 +281,8 @@ func TestSubscribePrivateChannelInvalidSignature(t *testing.T) {
 	if strings.Contains(dataStr, expectedSignature) || strings.Contains(dataStr, socketID+":"+channelName) {
 		t.Errorf("Error response leaked signature material: %s", dataStr)
 	}
+
+	requireErrorCode(t, event.Data, errorCodeUnauthorized)
 }
 
 func TestSubscribeChannelNameIsJSONEscaped(t *testing.T) {
@@ -372,6 +374,8 @@ func TestSubscribePresenceChannelRequiresChannelData(t *testing.T) {
 	if event.Event != "pusher:error" {
 		t.Errorf("Expected event 'pusher:error', got %q", event.Event)
 	}
+
+	requireErrorCode(t, event.Data, errorCodeUnauthorized)
 }
 
 func TestSubscribePrivateChannelMissingAuth(t *testing.T) {
@@ -414,6 +418,8 @@ func TestSubscribePrivateChannelMissingAuth(t *testing.T) {
 	if event.Event != "pusher:error" {
 		t.Errorf("Expected event 'pusher:error', got '%s'", event.Event)
 	}
+
+	requireErrorCode(t, event.Data, errorCodeUnauthorized)
 }
 
 func TestPingPong(t *testing.T) {
@@ -834,4 +840,29 @@ func TestWebSocketOriginValidation(t *testing.T) {
 		t.Fatalf("Expected connection to succeed with no origin header, got error: %v", err)
 	}
 	ws.Close()
+}
+
+// requireErrorCode decodes a pusher:error data payload and asserts that it
+// contains the expected numeric protocol error code.
+func requireErrorCode(t *testing.T, data json.RawMessage, want int) {
+	t.Helper()
+
+	var dataStr string
+	if err := json.Unmarshal(data, &dataStr); err != nil {
+		t.Fatalf("expected string-encoded error data, got %s: %v", data, err)
+	}
+
+	var payload struct {
+		Code *int `json:"code"`
+	}
+	if err := json.Unmarshal([]byte(dataStr), &payload); err != nil {
+		t.Fatalf("failed to decode error data: %v", err)
+	}
+
+	if payload.Code == nil {
+		t.Fatalf("error payload has no numeric code: %s", dataStr)
+	}
+	if *payload.Code != want {
+		t.Fatalf("error code = %d, want %d", *payload.Code, want)
+	}
 }

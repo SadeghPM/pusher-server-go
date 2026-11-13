@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"pusher-clone/config"
 )
@@ -26,7 +27,7 @@ func TestOfficialPusherHTTPSignatureVector(t *testing.T) {
 		AppSecret: "7ad3773142a6692b25b8",
 	}
 
-	if err := authenticateRequest(request, []byte(body), app); err != nil {
+	if err := authenticateRequestAt(request, []byte(body), app, time.Unix(1353088179, 0)); err != nil {
 		t.Fatalf("official Pusher HTTP signature vector was rejected: %v", err)
 	}
 }

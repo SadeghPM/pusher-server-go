@@ -12,10 +12,25 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
 
 	"pusher-clone/config"
 	"pusher-clone/core"
 	"pusher-clone/metrics"
+)
+
+const (
+	// authTimestampWindow is the maximum accepted clock skew for REST API
+	// requests, as specified by the Pusher HTTP API.
+	authTimestampWindow = 600 * time.Second
+
+	// maxEventDataLength is the maximum length of the event data string in
+	// bytes, matching the official Pusher HTTP API's 10 KB limit.
+	maxEventDataLength = 10000
 )
 
 type API struct {
@@ -103,6 +118,11 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 		}
 	}
 
+	if len(payload.Data) > maxEventDataLength {
+		http.Error(w, "Event message over 10k", http.StatusRequestEntityTooLarge)
+		return
+	}
+
 	// 3. Broadcast to WebSockets
 	appHub := a.globalHub.GetOrCreateAppHub(appID)
 
@@ -135,37 +155,114 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 	w.Write([]byte(`{}`))
 }
 
-// authenticateRequest verifies the Pusher REST API request signature.
+// authenticateRequest verifies the Pusher REST API request signature using the
+// current time for the timestamp window.
 func authenticateRequest(r *http.Request, body []byte, appCfg *config.AppConfig) error {
-	authKey := r.URL.Query().Get("auth_key")
-	authTimestamp := r.URL.Query().Get("auth_timestamp")
-	authVersion := r.URL.Query().Get("auth_version")
-	bodyMD5 := r.URL.Query().Get("body_md5")
-	authSignature := r.URL.Query().Get("auth_signature")
+	return authenticateRequestAt(r, body, appCfg, time.Now())
+}
+
+// authenticateRequestAt verifies the Pusher REST API request signature. It is
+// parameterized by time so tests can verify fixed official vectors.
+func authenticateRequestAt(r *http.Request, body []byte, appCfg *config.AppConfig, now time.Time) error {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return errors.New("Invalid query string")
+	}
+
+	authKey := query.Get("auth_key")
+	authTimestamp := query.Get("auth_timestamp")
+	authVersion := query.Get("auth_version")
+	bodyMD5 := query.Get("body_md5")
+	authSignature := query.Get("auth_signature")
 
 	if subtle.ConstantTimeCompare([]byte(authKey), []byte(appCfg.AppKey)) != 1 {
 		return errors.New("Unauthorized")
 	}
 
-	// Verify body MD5
-	hasher := md5.New()
-	hasher.Write(body)
-	expectedMD5 := hex.EncodeToString(hasher.Sum(nil))
-
-	if bodyMD5 != expectedMD5 {
-		return errors.New("Invalid body MD5")
+	if authVersion != "1.0" {
+		return errors.New("Invalid auth_version")
 	}
 
-	queryParams := fmt.Sprintf("auth_key=%s&auth_timestamp=%s&auth_version=%s&body_md5=%s", authKey, authTimestamp, authVersion, bodyMD5)
+	timestamp, err := strconv.ParseInt(authTimestamp, 10, 64)
+	if err != nil {
+		return errors.New("Invalid auth_timestamp")
+	}
+
+	nowUnix := now.Unix()
+	windowSeconds := int64(authTimestampWindow / time.Second)
+	if timestamp < nowUnix-windowSeconds || timestamp > nowUnix+windowSeconds {
+		return errors.New("Timestamp expired")
+	}
+
+	if len(body) > 0 && bodyMD5 == "" {
+		return errors.New("Missing body MD5")
+	}
+
+	if bodyMD5 != "" {
+		hasher := md5.New()
+		hasher.Write(body)
+		expectedMD5 := hex.EncodeToString(hasher.Sum(nil))
+
+		if subtle.ConstantTimeCompare([]byte(bodyMD5), []byte(expectedMD5)) != 1 {
+			return errors.New("Invalid body MD5")
+		}
+	}
+
+	queryParams, err := canonicalQueryString(query)
+	if err != nil {
+		return err
+	}
+
 	stringToSign := fmt.Sprintf("%s\n%s\n%s", r.Method, r.URL.Path, queryParams)
 
 	mac := hmac.New(sha256.New, []byte(appCfg.AppSecret))
 	mac.Write([]byte(stringToSign))
-	expectedSignature := hex.EncodeToString(mac.Sum(nil))
+	expectedSignature := mac.Sum(nil)
 
-	if !hmac.Equal([]byte(authSignature), []byte(expectedSignature)) {
+	providedSignature, err := hex.DecodeString(authSignature)
+	if err != nil {
+		return errors.New("Invalid signature")
+	}
+
+	if !hmac.Equal(providedSignature, expectedSignature) {
 		return errors.New("Invalid signature")
 	}
 
 	return nil
+}
+
+// canonicalQueryString reconstructs the string used for Pusher request
+// signatures: every query parameter except auth_signature, sorted by key, with
+// keys lowercased and values left in their decoded form.
+func canonicalQueryString(query url.Values) (string, error) {
+	keys := make([]string, 0, len(query))
+	canonicalKey := make(map[string]string, len(query))
+
+	for key, values := range query {
+		lowerKey := strings.ToLower(key)
+
+		if len(values) != 1 {
+			return "", fmt.Errorf("Duplicate query parameter %q", lowerKey)
+		}
+
+		if lowerKey == "auth_signature" {
+			continue
+		}
+
+		if _, exists := canonicalKey[lowerKey]; exists {
+			return "", fmt.Errorf("Duplicate query parameter %q", lowerKey)
+		}
+
+		canonicalKey[lowerKey] = key
+		keys = append(keys, lowerKey)
+	}
+
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, key+"="+query.Get(canonicalKey[key]))
+	}
+
+	return strings.Join(parts, "&"), nil
 }

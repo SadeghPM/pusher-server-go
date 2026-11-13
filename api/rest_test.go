@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"pusher-clone/config"
 	"pusher-clone/core"
@@ -65,7 +66,7 @@ func TestHandleEventsAuth(t *testing.T) {
 	bodyMD5 := hex.EncodeToString(hasher.Sum(nil))
 
 	authKey := "test-key"
-	authTimestamp := "1234567890"
+	authTimestamp := fmt.Sprintf("%d", time.Now().Unix())
 	authVersion := "1.0"
 
 	// Create Signature
@@ -111,7 +112,7 @@ func TestHandleEventsAuthFailure_BadKey(t *testing.T) {
 	bodyMD5 := hex.EncodeToString(hasher.Sum(nil))
 
 	authKey := "wrong-key"
-	authTimestamp := "1234567890"
+	authTimestamp := fmt.Sprintf("%d", time.Now().Unix())
 	authVersion := "1.0"
 
 	// Create Signature
@@ -155,7 +156,7 @@ func TestHandleEventsAuthFailure_BadMD5(t *testing.T) {
 	bodyMD5 := "00000000000000000000000000000000"
 
 	authKey := "test-key"
-	authTimestamp := "1234567890"
+	authTimestamp := fmt.Sprintf("%d", time.Now().Unix())
 	authVersion := "1.0"
 
 	// Create Signature
@@ -201,7 +202,7 @@ func TestHandleEventsAuthFailure_BadSignature(t *testing.T) {
 	bodyMD5 := hex.EncodeToString(hasher.Sum(nil))
 
 	authKey := "test-key"
-	authTimestamp := "1234567890"
+	authTimestamp := fmt.Sprintf("%d", time.Now().Unix())
 	authVersion := "1.0"
 
 	authSignature := "0000000000000000000000000000000000000000000000000000000000000000"
@@ -241,7 +242,7 @@ func TestHandleEventsInvalidJSON(t *testing.T) {
 	bodyMD5 := hex.EncodeToString(hasher.Sum(nil))
 
 	authKey := "test-key"
-	authTimestamp := "1234567890"
+	authTimestamp := fmt.Sprintf("%d", time.Now().Unix())
 	authVersion := "1.0"
 
 	// Create Signature
@@ -398,7 +399,7 @@ func signedEventsRequest(body []byte, appKey, appSecret string) *http.Request {
 	hasher.Write(body)
 	bodyMD5 := hex.EncodeToString(hasher.Sum(nil))
 
-	authTimestamp := "1234567890"
+	authTimestamp := fmt.Sprintf("%d", time.Now().Unix())
 	authVersion := "1.0"
 	queryParams := fmt.Sprintf("auth_key=%s&auth_timestamp=%s&auth_version=%s&body_md5=%s", appKey, authTimestamp, authVersion, bodyMD5)
 	stringToSign := fmt.Sprintf("POST\n/apps/123/events\n%s", queryParams)
