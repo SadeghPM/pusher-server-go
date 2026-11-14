@@ -102,10 +102,21 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 		return
 	}
 
-	// Gather channels without mutating the decoded slice.
-	channels := append([]string(nil), payload.Channels...)
+	// Deduplicate channels: the same channel listed twice would broadcast the
+	// event twice to every subscriber.
+	seen := make(map[string]struct{}, len(payload.Channels))
+	channels := make([]string, 0, len(payload.Channels)+1)
+	addChannel := func(channel string) {
+		if _, ok := seen[channel]; !ok {
+			seen[channel] = struct{}{}
+			channels = append(channels, channel)
+		}
+	}
+	for _, channel := range payload.Channels {
+		addChannel(channel)
+	}
 	if payload.Channel != "" {
-		channels = append(channels, payload.Channel)
+		addChannel(payload.Channel)
 	}
 	if len(channels) == 0 || len(channels) > 100 {
 		http.Error(w, "Invalid channels", http.StatusBadRequest)
@@ -236,7 +247,7 @@ func authenticateRequestAt(r *http.Request, body []byte, appCfg *config.AppConfi
 // keys lowercased and values left in their decoded form.
 func canonicalQueryString(query url.Values) (string, error) {
 	keys := make([]string, 0, len(query))
-	canonicalKey := make(map[string]string, len(query))
+	canonicalValues := make(map[string]string, len(query))
 
 	for key, values := range query {
 		lowerKey := strings.ToLower(key)
@@ -249,11 +260,11 @@ func canonicalQueryString(query url.Values) (string, error) {
 			continue
 		}
 
-		if _, exists := canonicalKey[lowerKey]; exists {
+		if _, exists := canonicalValues[lowerKey]; exists {
 			return "", fmt.Errorf("Duplicate query parameter %q", lowerKey)
 		}
 
-		canonicalKey[lowerKey] = key
+		canonicalValues[lowerKey] = values[0]
 		keys = append(keys, lowerKey)
 	}
 
@@ -261,7 +272,7 @@ func canonicalQueryString(query url.Values) (string, error) {
 
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
-		parts = append(parts, key+"="+query.Get(canonicalKey[key]))
+		parts = append(parts, key+"="+canonicalValues[key])
 	}
 
 	return strings.Join(parts, "&"), nil

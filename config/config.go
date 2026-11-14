@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -14,6 +15,17 @@ import (
 	"sync"
 
 	"gopkg.in/yaml.v3"
+)
+
+// Sentinel errors so callers (such as the dashboard API) can map failures to
+// HTTP status codes without matching on error strings.
+var (
+	// ErrAppInvalid indicates a malformed or missing app field.
+	ErrAppInvalid = errors.New("invalid app")
+	// ErrAppExists indicates an app_id or app_key collision.
+	ErrAppExists = errors.New("app already exists")
+	// ErrAppNotFound indicates no app with the requested ID.
+	ErrAppNotFound = errors.New("app not found")
 )
 
 // slugRegex matches valid slug identifiers: lowercase letters, digits, and hyphens.
@@ -268,12 +280,12 @@ func (m *Manager) AddApp(app AppConfig) error {
 
 	// Validate app_id is provided
 	if app.AppID == "" {
-		return fmt.Errorf("app_id is required")
+		return fmt.Errorf("%w: app_id is required", ErrAppInvalid)
 	}
 
 	// Validate slug format
 	if !IsValidSlug(app.AppID) {
-		return fmt.Errorf("app_id must be a valid slug (lowercase letters, digits, hyphens, 2-64 chars, no leading/trailing hyphen)")
+		return fmt.Errorf("%w: app_id must be a valid slug (lowercase letters, digits, hyphens, 2-64 chars, no leading/trailing hyphen)", ErrAppInvalid)
 	}
 
 	// Auto-generate app_key if not provided
@@ -296,12 +308,12 @@ func (m *Manager) AddApp(app AppConfig) error {
 
 	// Check for duplicate app_id
 	if _, exists := m.appsByID[app.AppID]; exists {
-		return fmt.Errorf("app with id %q already exists", app.AppID)
+		return fmt.Errorf("%w: app with id %q already exists", ErrAppExists, app.AppID)
 	}
 
 	// Check for duplicate app_key
 	if _, exists := m.appsByKey[app.AppKey]; exists {
-		return fmt.Errorf("app with key %q already exists", app.AppKey)
+		return fmt.Errorf("%w: app with key %q already exists", ErrAppExists, app.AppKey)
 	}
 
 	base := m.config
@@ -327,10 +339,10 @@ func (m *Manager) UpdateApp(appID string, allowedOrigins []string, webhooks []st
 	defer m.mu.Unlock()
 
 	if appID == "" {
-		return fmt.Errorf("app_id is required")
+		return fmt.Errorf("%w: app_id is required", ErrAppInvalid)
 	}
 	if m.config == nil {
-		return fmt.Errorf("app with id %q not found", appID)
+		return fmt.Errorf("%w: app with id %q not found", ErrAppNotFound, appID)
 	}
 
 	next := cloneConfig(m.config)
@@ -345,7 +357,7 @@ func (m *Manager) UpdateApp(appID string, allowedOrigins []string, webhooks []st
 	}
 
 	if !found {
-		return fmt.Errorf("app with id %q not found", appID)
+		return fmt.Errorf("%w: app with id %q not found", ErrAppNotFound, appID)
 	}
 
 	if err := m.commitConfigLocked(next); err != nil {
@@ -363,25 +375,26 @@ func (m *Manager) DeleteApp(appID string) error {
 	defer m.mu.Unlock()
 
 	if appID == "" {
-		return fmt.Errorf("app_id is required")
+		return fmt.Errorf("%w: app_id is required", ErrAppInvalid)
 	}
 	if m.config == nil {
-		return fmt.Errorf("app with id %q not found", appID)
+		return fmt.Errorf("%w: app with id %q not found", ErrAppNotFound, appID)
 	}
 
 	if _, exists := m.appsByID[appID]; !exists {
-		return fmt.Errorf("app with id %q not found", appID)
+		return fmt.Errorf("%w: app with id %q not found", ErrAppNotFound, appID)
 	}
 
-	// Build the next immutable snapshot.
-	newApps := make([]AppConfig, 0, len(m.config.Apps)-1)
-	for _, app := range m.config.Apps {
+	// Build the next snapshot from a clone and filter in place, so the slice
+	// backing arrays of the current config are never mutated.
+	next := cloneConfig(m.config)
+	kept := next.Apps[:0]
+	for _, app := range next.Apps {
 		if app.AppID != appID {
-			newApps = append(newApps, app)
+			kept = append(kept, app)
 		}
 	}
-	next := cloneConfig(m.config)
-	next.Apps = newApps
+	next.Apps = kept
 
 	if err := m.commitConfigLocked(next); err != nil {
 		return err

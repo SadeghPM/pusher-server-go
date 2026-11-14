@@ -2,14 +2,18 @@ package dashboard
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"pusher-clone/config"
@@ -47,10 +51,21 @@ func (n *NotifierAdapter) Notify(appID, eventType, socketID, channel, event, dat
 // Compile-time interface check.
 var _ core.DebugNotifier = (*NotifierAdapter)(nil)
 
+const (
+	// wsTicketTTL is how long a dashboard WebSocket ticket stays valid.
+	wsTicketTTL = 30 * time.Second
+)
+
 type Server struct {
 	observer      *Observer
 	configManager *config.Manager
 	globalHub     *core.GlobalHub
+
+	// One-time, short-lived tickets for opening the dashboard WebSocket
+	// (/ws) without sending the long-lived admin token in the URL, where it
+	// can leak into access logs.
+	ticketsMu sync.Mutex
+	tickets   map[string]time.Time // ticket -> expiry
 }
 
 func NewServer(observer *Observer, manager *config.Manager, hub *core.GlobalHub) *Server {
@@ -58,6 +73,7 @@ func NewServer(observer *Observer, manager *config.Manager, hub *core.GlobalHub)
 		observer:      observer,
 		configManager: manager,
 		globalHub:     hub,
+		tickets:       make(map[string]time.Time),
 	}
 }
 
@@ -97,8 +113,11 @@ func (s *Server) Start(ctx context.Context) {
 	}
 
 	mux.HandleFunc("/api/apps", authMiddleware(s.handleAppsRouter))
-	mux.HandleFunc("/ws", authMiddleware(s.handleWebSocket))
+	// /ws does its own authorization: it accepts either a one-time ticket
+	// (issued via POST /api/ticket) or the admin token as a fallback.
+	mux.HandleFunc("/ws", s.handleWebSocket)
 	mux.HandleFunc("/api/trigger", authMiddleware(s.handleTrigger))
+	mux.HandleFunc("/api/ticket", authMiddleware(s.handleTicket))
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		cfg := s.configManager.GetConfig()
@@ -157,6 +176,22 @@ func (s *Server) Start(ctx context.Context) {
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("Dashboard server shutdown error", "error", err)
+	}
+}
+
+// appErrorStatus maps config.Manager errors to HTTP status codes. The zero
+// value is handled by the default branch: unexpected failures are reported as
+// 500 rather than being mistaken for client errors.
+func appErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, config.ErrAppExists):
+		return http.StatusConflict
+	case errors.Is(err, config.ErrAppInvalid):
+		return http.StatusBadRequest
+	case errors.Is(err, config.ErrAppNotFound):
+		return http.StatusNotFound
+	default:
+		return http.StatusInternalServerError
 	}
 }
 
@@ -229,7 +264,7 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.configManager.AddApp(newApp); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
+		http.Error(w, err.Error(), appErrorStatus(err))
 		return
 	}
 
@@ -272,7 +307,7 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.configManager.UpdateApp(req.AppID, req.AllowedOrigins, req.Webhooks); err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		http.Error(w, err.Error(), appErrorStatus(err))
 		return
 	}
 
@@ -310,7 +345,7 @@ func (s *Server) handleDeleteApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.configManager.DeleteApp(req.AppID); err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		http.Error(w, err.Error(), appErrorStatus(err))
 		return
 	}
 
@@ -323,7 +358,79 @@ func (s *Server) handleDeleteApp(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted", "app_id": req.AppID})
 }
 
+// handleTicket issues a one-time, short-lived ticket for opening the /ws
+// WebSocket. The request must already be authenticated with the admin token.
+func (s *Server) handleTicket(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		slog.Error("Failed to generate WebSocket ticket", "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	ticket := hex.EncodeToString(buf)
+
+	s.ticketsMu.Lock()
+	s.purgeExpiredTicketsLocked(time.Now())
+	s.tickets[ticket] = time.Now().Add(wsTicketTTL)
+	s.ticketsMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]any{"ticket": ticket})
+}
+
+// purgeExpiredTicketsLocked drops stale tickets. Must be called with
+// s.ticketsMu held.
+func (s *Server) purgeExpiredTicketsLocked(now time.Time) {
+	for ticket, expiry := range s.tickets {
+		if now.After(expiry) {
+			delete(s.tickets, ticket)
+		}
+	}
+}
+
+// authorizeWebSocket validates the /ws request. A one-time ticket is
+// preferred (it keeps the long-lived admin token out of URLs and access
+// logs); the admin token remains accepted as a fallback.
+func (s *Server) authorizeWebSocket(r *http.Request) bool {
+	token := s.configManager.GetConfig().AdminToken
+	if token == "" {
+		return false
+	}
+
+	if ticket := r.URL.Query().Get("ticket"); ticket != "" {
+		s.ticketsMu.Lock()
+		expiry, ok := s.tickets[ticket]
+		if ok {
+			// Consume the ticket: it may only ever be used once.
+			delete(s.tickets, ticket)
+		}
+		s.ticketsMu.Unlock()
+		return ok && time.Now().Before(expiry)
+	}
+
+	providedToken := ""
+	authHeader := r.Header.Get("Authorization")
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		providedToken = strings.TrimPrefix(authHeader, "Bearer ")
+	} else if queryToken := r.URL.Query().Get("token"); queryToken != "" {
+		providedToken = queryToken
+	}
+
+	return subtle.ConstantTimeCompare([]byte(providedToken), []byte(token)) == 1
+}
+
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeWebSocket(r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	appID := r.URL.Query().Get("app_id")
 	if appID == "" {
 		http.Error(w, "app_id is required", http.StatusBadRequest)
