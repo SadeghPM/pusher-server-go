@@ -206,6 +206,38 @@ func TestAppHubGetPresenceMembers(t *testing.T) {
 	}
 }
 
+func TestAppHubBroadcastToChannelAfterClientClose(t *testing.T) {
+	// Regression: UnregisterClient closes the client's Send channel while a
+	// concurrent BroadcastToChannel may still be iterating subscribers. A send
+	// racing with that close used to panic; TrySend must make it safe.
+	hub := NewAppHub("test-app", nil)
+	defer hub.Close()
+
+	client := &Client{SocketID: "123.1", Send: make(chan []byte, 1)}
+	hub.RegisterClient(client)
+	hub.Subscribe(client, "race-channel", nil)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		payload := []byte(`{"event":"e","data":"{}"}`)
+		for i := 0; i < 1000; i++ {
+			hub.BroadcastToChannel("race-channel", payload, "")
+		}
+	}()
+
+	for i := 0; i < 1000; i++ {
+		hub.UnregisterClient(client)
+		hub.RegisterClient(client)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Timed out: broadcast never completed")
+	}
+}
+
 func TestAppHubBroadcastToChannel(t *testing.T) {
 	hub := NewAppHub("test-app", nil)
 	channelName := "test-channel"

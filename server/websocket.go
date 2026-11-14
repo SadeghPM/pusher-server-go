@@ -121,7 +121,9 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, appKey 
 		}),
 		"",
 	)
-	client.Send <- establishedPayload
+	// TrySend: if the send buffer is full the connection is unusable anyway,
+	// and a client that is being torn down concurrently must not panic.
+	client.TrySend(establishedPayload)
 
 	s.globalHub.Debugger.Notify(appCfg.AppID, "connection", socketID, "", "", "")
 
@@ -235,7 +237,9 @@ func (s *Server) handlePing(client *core.Client, debug bool) {
 			"event", "pusher:ping",
 		)
 	}
-	client.Send <- core.MarshalEvent("pusher:pong", "", core.EncodeDataString(struct{}{}), "")
+	// TrySend: if the buffer is full the client is stalled; dropping the pong
+	// is better than blocking the read pump behind a dead connection.
+	client.TrySend(core.MarshalEvent("pusher:pong", "", core.EncodeDataString(struct{}{}), ""))
 }
 
 func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appKey string) {
@@ -249,15 +253,21 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appKey 
 
 	var subData PusherSubscribeData
 
+	// Pusher clients may double-encode the subscribe data as a JSON string;
+	// accept both the encoded string and a plain object.
 	var dataStr string
-	err := json.Unmarshal(event.Data, &dataStr)
-	if err == nil {
-		json.Unmarshal([]byte(dataStr), &subData)
-	} else {
-		json.Unmarshal(event.Data, &subData)
+	if err := json.Unmarshal(event.Data, &dataStr); err == nil {
+		if err := json.Unmarshal([]byte(dataStr), &subData); err != nil {
+			s.sendError(client, 0, "Invalid subscribe data: could not parse data.")
+			return
+		}
+	} else if err := json.Unmarshal(event.Data, &subData); err != nil {
+		s.sendError(client, 0, "Invalid subscribe data: could not parse data.")
+		return
 	}
 
 	if subData.Channel == "" {
+		s.sendError(client, 0, "Invalid subscribe data: missing channel.")
 		return
 	}
 
@@ -320,7 +330,9 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appKey 
 			core.EncodeDataString(struct{}{}),
 			"",
 		)
-		client.Send <- successPayload
+		// TrySend: drop the reply rather than block the read pump if the client
+		// is stalled.
+		client.TrySend(successPayload)
 		s.globalHub.Debugger.Notify(client.AppHub.AppID(), "subscription", client.SocketID, subData.Channel, "", "")
 	}
 }
@@ -350,32 +362,45 @@ func (s *Server) verifySubscriptionSignature(client *core.Client, subData Pusher
 }
 
 // sendError sends a Pusher error event with a serialized error object as data.
+// Per the protocol, the code field is optional: a code of 0 sends no code,
+// which is right for generic client errors that have no documented code and
+// must not close the connection.
 func (s *Server) sendError(client *core.Client, code int, message string) {
+	data := map[string]any{"message": message}
+	if code != 0 {
+		data["code"] = code
+	}
 	payload := core.MarshalEvent(
 		"pusher:error",
 		"",
-		core.EncodeDataString(map[string]any{
-			"message": message,
-			"code":    code,
-		}),
+		core.EncodeDataString(data),
 		"",
 	)
-	client.Send <- payload
+	// TrySend: drop the error rather than block the read pump if the client
+	// is stalled.
+	client.TrySend(payload)
 }
 
 func (s *Server) handlePresenceSubscriptionSuccess(client *core.Client, channel string, member *core.ChannelMember, isNewUser bool) {
 	membersMap := client.AppHub.GetPresenceMembers(channel)
 
 	ids := make([]string, 0, len(membersMap))
-	for id := range membersMap {
+	hash := make(map[string]json.RawMessage, len(membersMap))
+	for id, info := range membersMap {
 		ids = append(ids, id)
+		// Normalize a missing user_info to an empty object so the hash never
+		// mixes null values with objects (matches member_added handling).
+		if len(info) == 0 {
+			info = json.RawMessage(`{}`)
+		}
+		hash[id] = info
 	}
 
 	presenceHash := map[string]interface{}{
 		"presence": map[string]interface{}{
 			"ids":   ids,
-			"hash":  membersMap,
-			"count": len(membersMap),
+			"hash":  hash,
+			"count": len(ids),
 		},
 	}
 
@@ -385,7 +410,9 @@ func (s *Server) handlePresenceSubscriptionSuccess(client *core.Client, channel 
 		core.EncodeDataString(presenceHash),
 		"",
 	)
-	client.Send <- successPayload
+	// TrySend: drop the reply rather than block the read pump if the client
+	// is stalled.
+	client.TrySend(successPayload)
 
 	s.globalHub.Debugger.Notify(client.AppHub.AppID(), "subscription", client.SocketID, channel, "", "")
 
@@ -420,12 +447,18 @@ func (s *Server) handlePresenceSubscriptionSuccess(client *core.Client, channel 
 func (s *Server) handleUnsubscribe(client *core.Client, event PusherEvent, debug bool) {
 	var unsubData PusherUnsubscribeData
 
+	// Accept both the double-encoded string and a plain object, like
+	// handleSubscribe does. An unsubscribe with no channel stays a harmless
+	// no-op.
 	var dataStr string
-	err := json.Unmarshal(event.Data, &dataStr)
-	if err == nil {
-		json.Unmarshal([]byte(dataStr), &unsubData)
-	} else {
-		json.Unmarshal(event.Data, &unsubData)
+	if err := json.Unmarshal(event.Data, &dataStr); err == nil {
+		if err := json.Unmarshal([]byte(dataStr), &unsubData); err != nil {
+			s.sendError(client, 0, "Invalid unsubscribe data: could not parse data.")
+			return
+		}
+	} else if err := json.Unmarshal(event.Data, &unsubData); err != nil {
+		s.sendError(client, 0, "Invalid unsubscribe data: could not parse data.")
+		return
 	}
 
 	if unsubData.Channel != "" {

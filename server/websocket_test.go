@@ -422,6 +422,142 @@ func TestSubscribePrivateChannelMissingAuth(t *testing.T) {
 	requireErrorCode(t, event.Data, errorCodeUnauthorized)
 }
 
+func TestSubscribeMalformedData(t *testing.T) {
+	ts, _, _, appKey, _ := setupTestServer()
+	defer ts.Close()
+
+	ws, _, err := connectWebSocket(ts, appKey)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer ws.Close()
+
+	ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err = ws.ReadMessage() // Read connection_established
+	if err != nil {
+		t.Fatalf("Failed to read connection_established message: %v", err)
+	}
+
+	// Subscribe data that cannot be parsed must produce a pusher:error,
+	// not silence.
+	cases := []struct {
+		name    string
+		payload string
+		wantMsg string
+	}{
+		{
+			name:    "unparseable string data",
+			payload: `{"event":"pusher:subscribe","data":"not-json"}`,
+			wantMsg: "could not parse",
+		},
+		{
+			name:    "missing channel",
+			payload: `{"event":"pusher:subscribe","data":{"auth":"x:y"}}`,
+			wantMsg: "missing channel",
+		},
+		{
+			name:    "null data",
+			payload: `{"event":"pusher:subscribe","data":null}`,
+			wantMsg: "could not parse",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ws.WriteMessage(websocket.TextMessage, []byte(tc.payload)); err != nil {
+				t.Fatalf("Failed to write subscribe message: %v", err)
+			}
+
+			_, p, err := ws.ReadMessage()
+			if err != nil {
+				t.Fatalf("Failed to read error event: %v", err)
+			}
+
+			var event PusherEvent
+			if err := json.Unmarshal(p, &event); err != nil {
+				t.Fatalf("Failed to unmarshal event: %v", err)
+			}
+			if event.Event != "pusher:error" {
+				t.Fatalf("Expected event 'pusher:error', got '%s'", event.Event)
+			}
+
+			// The pusher:error data is double-encoded (a JSON string
+			// containing the error object), per the protocol.
+			var dataStr string
+			if err := json.Unmarshal(event.Data, &dataStr); err != nil {
+				t.Fatalf("Expected string-encoded error data, got %s: %v", event.Data, err)
+			}
+
+			var data map[string]any
+			if err := json.Unmarshal([]byte(dataStr), &data); err != nil {
+				t.Fatalf("Failed to unmarshal error data: %v", err)
+			}
+			if msg, _ := data["message"].(string); !strings.Contains(msg, tc.wantMsg) {
+				t.Errorf("Expected message containing %q, got %q", tc.wantMsg, msg)
+			}
+			// Generic client errors must not carry a protocol close code.
+			if _, ok := data["code"]; ok {
+				t.Errorf("Expected no code for generic error, got %v", data["code"])
+			}
+		})
+	}
+
+	// The connection must remain usable after the errors.
+	ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if err := ws.WriteMessage(websocket.TextMessage, []byte(`{"event":"pusher:ping","data":{}}`)); err != nil {
+		t.Fatalf("Failed to write ping: %v", err)
+	}
+	_, p, err := ws.ReadMessage()
+	if err != nil {
+		t.Fatalf("Connection did not survive malformed subscribe data: %v", err)
+	}
+	var event PusherEvent
+	json.Unmarshal(p, &event)
+	if event.Event != "pusher:pong" {
+		t.Errorf("Expected 'pusher:pong' after errors, got '%s'", event.Event)
+	}
+}
+
+func TestUnsubscribeMalformedData(t *testing.T) {
+	ts, _, _, appKey, _ := setupTestServer()
+	defer ts.Close()
+
+	ws, _, err := connectWebSocket(ts, appKey)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer ws.Close()
+
+	ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err = ws.ReadMessage() // Read connection_established
+	if err != nil {
+		t.Fatalf("Failed to read connection_established message: %v", err)
+	}
+
+	if err := ws.WriteMessage(websocket.TextMessage, []byte(`{"event":"pusher:unsubscribe","data":"also-bad"}`)); err != nil {
+		t.Fatalf("Failed to write unsubscribe message: %v", err)
+	}
+
+	_, p, err := ws.ReadMessage()
+	if err != nil {
+		t.Fatalf("Failed to read error event: %v", err)
+	}
+
+	var event PusherEvent
+	json.Unmarshal(p, &event)
+	if event.Event != "pusher:error" {
+		t.Fatalf("Expected event 'pusher:error', got '%s'", event.Event)
+	}
+
+	var dataStr string
+	if err := json.Unmarshal(event.Data, &dataStr); err != nil {
+		t.Fatalf("Expected string-encoded error data, got %s: %v", event.Data, err)
+	}
+	if !strings.Contains(dataStr, "could not parse") {
+		t.Errorf("Unexpected error data: %s", dataStr)
+	}
+}
+
 func TestPingPong(t *testing.T) {
 	ts, _, _, appKey, _ := setupTestServer()
 	defer ts.Close()

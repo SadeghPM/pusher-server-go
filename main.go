@@ -151,7 +151,7 @@ func main() {
 		if strings.HasPrefix(path, "/apps/") && strings.HasSuffix(path, "/events") {
 			// Extract appID
 			parts := strings.Split(path, "/")
-			if len(parts) >= 4 {
+			if len(parts) == 4 {
 				appID := parts[2]
 				restAPI.HandleEvents(w, r, appID)
 				return

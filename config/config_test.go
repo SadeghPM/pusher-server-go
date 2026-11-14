@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -326,6 +327,41 @@ func TestManager_AddApp_DuplicateID(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("Expected error for duplicate app_id, got nil")
+	}
+	if !errors.Is(err, ErrAppExists) {
+		t.Errorf("Expected ErrAppExists, got: %v", err)
+	}
+}
+
+func TestManager_AddApp_TypedValidationErrors(t *testing.T) {
+	manager := NewManagerFromConfig(&Config{})
+
+	err := manager.AddApp(AppConfig{AppID: ""})
+	if !errors.Is(err, ErrAppInvalid) {
+		t.Errorf("Expected ErrAppInvalid for empty app_id, got: %v", err)
+	}
+
+	err = manager.AddApp(AppConfig{AppID: "Not a slug"})
+	if !errors.Is(err, ErrAppInvalid) {
+		t.Errorf("Expected ErrAppInvalid for invalid slug, got: %v", err)
+	}
+}
+
+func TestManager_DeleteApp_TypedError(t *testing.T) {
+	manager := NewManagerFromConfig(&Config{})
+
+	err := manager.DeleteApp("missing-app")
+	if !errors.Is(err, ErrAppNotFound) {
+		t.Errorf("Expected ErrAppNotFound, got: %v", err)
+	}
+}
+
+func TestManager_UpdateApp_TypedError(t *testing.T) {
+	manager := NewManagerFromConfig(&Config{})
+
+	err := manager.UpdateApp("missing-app", nil, nil)
+	if !errors.Is(err, ErrAppNotFound) {
+		t.Errorf("Expected ErrAppNotFound, got: %v", err)
 	}
 }
 

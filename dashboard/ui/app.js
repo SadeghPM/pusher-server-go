@@ -1164,13 +1164,43 @@
         openSocket();
     }
 
-    function openSocket() {
+    async function fetchWsTicket() {
+        const response = await apiFetch('/api/ticket', { method: 'POST' });
+        if (!response.ok) {
+            throw new Error(`Could not request a WebSocket ticket (${response.status}).`);
+        }
+        const data = await response.json();
+        if (!data || typeof data.ticket !== 'string' || !data.ticket) {
+            throw new Error('The dashboard returned an invalid WebSocket ticket.');
+        }
+        return data.ticket;
+    }
+
+    async function openSocket() {
         if (!state.shouldReconnect || !state.activeAppId || !state.token) return;
 
+        const generationFor = state.socketGeneration;
         setWsStatus(state.reconnectAttempts > 0 ? 'reconnecting' : 'connecting');
 
+        /* Tickets are single-use and short-lived, so every attempt fetches a
+           fresh one. This keeps the long-lived admin token out of the URL,
+           where it would leak into access logs. */
+        let ticket;
+        try {
+            ticket = await fetchWsTicket();
+        } catch (error) {
+            /* apiFetch has already handled an expired session (401). */
+            if (!state.token) return;
+            scheduleReconnect();
+            return;
+        }
+
+        /* The socket may have been disconnected or superseded while the
+           ticket request was in flight. */
+        if (!state.shouldReconnect || state.socketGeneration !== generationFor) return;
+
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const url = `${protocol}//${window.location.host}/ws?app_id=${encodeURIComponent(state.activeAppId)}&token=${encodeURIComponent(state.token)}`;
+        const url = `${protocol}//${window.location.host}/ws?app_id=${encodeURIComponent(state.activeAppId)}&ticket=${encodeURIComponent(ticket)}`;
 
         let socket;
         try {

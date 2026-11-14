@@ -263,11 +263,7 @@ func (h *AppHub) BroadcastToChannel(channel string, message []byte, excludeSocke
 	if subscribers, ok := h.channels[channel]; ok {
 		for client := range subscribers {
 			if client.SocketID != excludeSocketID {
-				select {
-				case client.Send <- message:
-				default:
-					// Cannot send, buffer full or closed
-				}
+				client.TrySend(message)
 			}
 		}
 	}
