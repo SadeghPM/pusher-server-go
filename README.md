@@ -96,6 +96,16 @@ With the control room, you can:
 
 The server exports Prometheus metrics on port `9601` by default (at the `/metrics` endpoint).
 
+### Health check
+
+The main server exposes an unauthenticated `GET /health` endpoint on its own port (default `6001`). It returns `200` with a JSON body while the process is up, so it can be used by load balancers, uptime monitors, and the systemd service:
+
+```json
+{"status":"ok","apps_count":2}
+```
+
+The dashboard port additionally provides `GET /api/health` (default `5174`, also unauthenticated).
+
 The following metrics are exported:
 
 | Metric | Type | Description |

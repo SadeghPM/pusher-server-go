@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -23,6 +24,53 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+// newRootMux builds the routing table for the main server. It is a separate
+// function so the routes (including /health) can be tested directly.
+func newRootMux(wsServer *server.Server, restAPI *api.API, manager *config.Manager) *http.ServeMux {
+	mux := http.NewServeMux()
+
+	// Liveness endpoint for load balancers, uptime monitors and the systemd
+	// service. It always returns 200 while the process is up — the listener
+	// serving it already proves the server works — and reports how many
+	// tenants are loaded so monitoring can alert on a degenerate config.
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"status":     "ok",
+			"apps_count": len(manager.GetConfig().Apps),
+		})
+	})
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+
+		// WebSocket endpoint for clients
+		// URL example: /app/app-key?protocol=7&client=js&version=7.0.3&flash=false
+		if strings.HasPrefix(path, "/app/") {
+			// Extract appKey
+			appKey := strings.TrimPrefix(path, "/app/")
+			wsServer.HandleWebSocket(w, r, appKey)
+			return
+		}
+
+		// REST API endpoint for backend (Laravel)
+		// URL example: /apps/app-id/events
+		if strings.HasPrefix(path, "/apps/") && strings.HasSuffix(path, "/events") {
+			// Extract appID
+			parts := strings.Split(path, "/")
+			if len(parts) == 4 {
+				appID := parts[2]
+				restAPI.HandleEvents(w, r, appID)
+				return
+			}
+		}
+
+		http.NotFound(w, r)
+	})
+
+	return mux
+}
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to the YAML configuration file")
@@ -132,34 +180,7 @@ func main() {
 	wsServer := server.NewServer(globalHub, manager)
 	restAPI := api.NewAPI(globalHub, manager)
 
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-
-		// WebSocket endpoint for clients
-		// URL example: /app/app-key?protocol=7&client=js&version=7.0.3&flash=false
-		if strings.HasPrefix(path, "/app/") {
-			// Extract appKey
-			appKey := strings.TrimPrefix(path, "/app/")
-			wsServer.HandleWebSocket(w, r, appKey)
-			return
-		}
-
-		// REST API endpoint for backend (Laravel)
-		// URL example: /apps/app-id/events
-		if strings.HasPrefix(path, "/apps/") && strings.HasSuffix(path, "/events") {
-			// Extract appID
-			parts := strings.Split(path, "/")
-			if len(parts) == 4 {
-				appID := parts[2]
-				restAPI.HandleEvents(w, r, appID)
-				return
-			}
-		}
-
-		http.NotFound(w, r)
-	})
+	mux := newRootMux(wsServer, restAPI, manager)
 
 	// Start Prometheus metrics server on a separate port
 	metricsMux := http.NewServeMux()
