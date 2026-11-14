@@ -67,7 +67,7 @@
     const viewDebug = $('view-debug');
     const viewOverview = $('view-overview');
 
-    const topbarApp = $('topbar-app');
+    const appHeroName = $('app-hero-name');
     const wsStatus = $('ws-status');
     const wsStatusText = $('ws-status-text');
     const themeToggle = $('theme-toggle');
@@ -268,12 +268,12 @@
        ============================================================ */
 
     function applyTheme(theme) {
-        const next = theme === 'light' ? 'light' : 'dark';
+        const next = theme === 'dark' ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', next);
         storageSet(THEME_KEY, next);
 
         const meta = $('meta-theme-color');
-        if (meta) meta.setAttribute('content', next === 'light' ? '#f7f8f3' : '#08090c');
+        if (meta) meta.setAttribute('content', next === 'light' ? '#ffffff' : '#0f0d13');
 
         if (themeToggle) {
             themeToggle.setAttribute(
@@ -285,7 +285,7 @@
 
     function initTheme() {
         const saved = storageGet(THEME_KEY);
-        applyTheme(saved === 'light' ? 'light' : 'dark');
+        applyTheme(saved === 'dark' ? 'dark' : 'light');
 
         if (themeToggle) {
             themeToggle.addEventListener('click', () => {
@@ -584,7 +584,7 @@
     }
 
     function updateDocumentTitle() {
-        const viewLabel = state.view === 'overview' ? 'Overview' : 'Live events';
+        const viewLabel = state.view === 'overview' ? 'App Settings' : 'Debug Console';
         document.title = state.activeAppId
             ? `${viewLabel} · ${state.activeAppId} · Pusher Server Go`
             : `${viewLabel} · Pusher Server Go`;
@@ -648,7 +648,7 @@
 
         if (state.apps.length === 0) {
             const option = document.createElement('option');
-            option.textContent = 'No tenants';
+            option.textContent = 'No apps';
             option.value = '';
             appSelector.appendChild(option);
             appSelector.disabled = true;
@@ -671,11 +671,11 @@
         const label = app ? app.app_id : '—';
 
         if (appSelector && app) appSelector.value = app.app_id;
-        if (topbarApp) topbarApp.textContent = label;
+        if (appHeroName) appHeroName.textContent = app ? (app.name || app.app_id) : '—';
         if (debugAppLabel) debugAppLabel.textContent = label;
         if (consoleApp) consoleApp.textContent = label;
         if (settingsAppLabel) settingsAppLabel.textContent = label;
-        if (dangerAppName) dangerAppName.textContent = app ? app.app_id : 'this tenant';
+        if (dangerAppName) dangerAppName.textContent = app ? app.app_id : 'this app';
 
         updateDocumentTitle();
     }
@@ -972,7 +972,7 @@
             });
 
             if (!response.ok) {
-                throw new Error(await readError(response, 'Could not create the tenant.'));
+                throw new Error(await readError(response, 'Could not create the app.'));
             }
 
             const created = await response.json();
@@ -983,7 +983,7 @@
             selectApp(created.app_id, { connect: true, resetStream: true });
             navigate('overview');
 
-            toast(`Tenant "${created.app_id}" created`, 'success');
+            toast(`App "${created.app_id}" created`, 'success');
         } catch (error) {
             if (error && error.message) {
                 showTenantError(error.message);
@@ -1020,7 +1020,7 @@
 
         const app = activeApp();
         if (!app) {
-            showCreatorError('Select a tenant before sending an event.');
+            showCreatorError('Select an app before sending an event.');
             return;
         }
 
@@ -1102,7 +1102,7 @@
             });
 
             if (!response.ok) {
-                throw new Error(await readError(response, 'Could not delete the tenant.'));
+                throw new Error(await readError(response, 'Could not delete the app.'));
             }
 
             state.apps = state.apps.filter((app) => app.app_id !== appId);
@@ -1124,7 +1124,7 @@
                 setWsStatus('idle');
             }
 
-            toast(`Tenant "${appId}" deleted`, 'success');
+            toast(`App "${appId}" deleted`, 'success');
         } catch (error) {
             if (error && error.message) {
                 deleteErrorText.textContent = error.message;
