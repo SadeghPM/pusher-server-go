@@ -1,0 +1,10 @@
+.git
+.github
+screenshot
+*.md
+LICENSE
+.goreleaser.yaml
+.DS_Store
+docker-compose.yml
+install.sh
+config.yaml

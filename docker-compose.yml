@@ -1,0 +1,10 @@
+services:
+  pusher:
+    image: ghcr.io/sadeghpm/pusher-server-go:latest
+    ports:
+      - "6001:6001"
+      - "5174:5174"
+      - "9601:9601"
+    volumes:
+      - ./config.yaml:/usr/local/bin/config.yaml:ro
+    restart: unless-stopped

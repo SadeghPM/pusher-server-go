@@ -77,6 +77,27 @@ apps:
 ./pusher-clone
 ```
 
+### Method 3: Docker
+
+```bash
+docker pull ghcr.io/sadeghpm/pusher-server-go:latest
+```
+
+Create a `config.yaml` (see the example above), then run:
+
+```bash
+docker run -d \
+  -p 6001:6001 -p 5174:5174 -p 9601:9601 \
+  -v ./config.yaml:/usr/local/bin/config.yaml:ro \
+  ghcr.io/sadeghpm/pusher-server-go:latest
+```
+
+Or use the included `docker-compose.yml`:
+
+```bash
+docker compose up -d
+```
+
 ---
 
 ## Web Interface
