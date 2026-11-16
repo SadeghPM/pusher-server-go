@@ -88,7 +88,7 @@ Create a `config.yaml` (see the example above), then run:
 ```bash
 docker run -d \
   -p 6001:6001 -p 5174:5174 -p 9601:9601 \
-  -v ./config.yaml:/usr/local/bin/config.yaml:ro \
+  -v ./config.yaml:/usr/local/bin/config.yaml \
   ghcr.io/sadeghpm/pusher-server-go:latest
 ```
 
