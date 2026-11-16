@@ -5,6 +5,8 @@ set -euo pipefail
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
 NC='\033[0m'
 
 die() {
@@ -101,7 +103,9 @@ echo -e "${GREEN}--- Configuration ---${NC}"
 WRITE_CONFIG=1
 if [ -f "${CONFIG_FILE}" ]; then
   echo -e "${YELLOW}An existing config was found at ${CONFIG_FILE}.${NC}"
-  read -r -u "${PROMPT_FD}" -p "Overwrite it? A backup will be kept. [y/N]: " OVERWRITE
+  echo ""
+  echo -e "${CYAN}${BOLD}[?] Overwrite it? A backup will be kept. [y/N]:${NC} "
+  read -r -u "${PROMPT_FD}" OVERWRITE
   case "${OVERWRITE}" in
     y|Y) cp -p "${CONFIG_FILE}" "${CONFIG_FILE}.bak.$(date +%Y%m%d%H%M%S)" ;;
     *) WRITE_CONFIG=0 ;;
@@ -125,7 +129,9 @@ if [ "${WRITE_CONFIG}" -eq 1 ]; then
     local label=$1 default=$2
     local input port
     while true; do
-      read -r -u "${PROMPT_FD}" -p "Enter port for ${label} [${default}]: " input
+      echo "" >&2
+      echo -e "${CYAN}${BOLD}[?] Enter port for ${label} [${default}]:${NC} " >&2
+      read -r -u "${PROMPT_FD}" input
       port="${input:-${default}}"
       if ! [[ "${port}" =~ ^[0-9]+$ ]] || [ "${port}" -lt 1 ] || [ "${port}" -gt 65535 ]; then
         echo -e "${RED}Enter a port between 1 and 65535.${NC}" >&2
@@ -147,12 +153,15 @@ if [ "${WRITE_CONFIG}" -eq 1 ]; then
   DASHBOARD_PORT="$(read_port "Dashboard" "5174")"
   echo -e "${GREEN}Using dashboard port ${DASHBOARD_PORT}.${NC}"
 
-  read -r -u "${PROMPT_FD}" -p "Enter public Pusher URL for third-party apps [http://localhost:${PORT}]: " INPUT_HOST
+  echo ""
+  echo -e "${CYAN}${BOLD}[?] Enter public Pusher URL for third-party apps [http://localhost:${PORT}]:${NC} "
+  read -r -u "${PROMPT_FD}" INPUT_HOST
   HOST="${INPUT_HOST:-http://localhost:${PORT}}"
   HOST="${HOST%/}"
   while ! [[ "${HOST}" =~ ^https?://[A-Za-z0-9._-]+(:[0-9]{1,5})?$ ]]; do
     echo -e "${RED}Enter a full http(s) URL with no path, e.g. https://pusher.example.com.${NC}" >&2
-    read -r -u "${PROMPT_FD}" -p "Public Pusher URL: " HOST
+    echo -e "${CYAN}${BOLD}[?] Public Pusher URL:${NC} "
+    read -r -u "${PROMPT_FD}" HOST
     HOST="${HOST%/}"
   done
   echo -e "${GREEN}Using public Pusher URL ${HOST}.${NC}"
@@ -234,6 +243,50 @@ if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
 else
   echo -e "${RED}Service ${SERVICE_NAME} failed to start. Check: journalctl -u ${SERVICE_NAME}${NC}" >&2
   exit 1
+fi
+
+# 9. Open firewall ports
+APP_PORT="$(awk -F': *' '/^port:/ {gsub(/"/, "", $2); print $2; exit}' "${CONFIG_FILE}")"
+APP_METRICS_PORT="$(awk -F': *' '/^metrics_port:/ {gsub(/"/, "", $2); print $2; exit}' "${CONFIG_FILE}")"
+APP_DASHBOARD_PORT="$(awk -F': *' '/^dashboard_port:/ {gsub(/"/, "", $2); print $2; exit}' "${CONFIG_FILE}")"
+APP_PORT="${APP_PORT:-6001}"
+APP_METRICS_PORT="${APP_METRICS_PORT:-9601}"
+APP_DASHBOARD_PORT="${APP_DASHBOARD_PORT:-5174}"
+
+open_firewall_ports() {
+  if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "active"; then
+    echo -e "${YELLOW}Opening ports in ufw...${NC}"
+    ufw allow "${APP_PORT}/tcp" >/dev/null
+    ufw allow "${APP_DASHBOARD_PORT}/tcp" >/dev/null
+    ufw allow "${APP_METRICS_PORT}/tcp" >/dev/null
+    echo -e "${GREEN}Opened ports ${APP_PORT}, ${APP_DASHBOARD_PORT}, ${APP_METRICS_PORT} in ufw.${NC}"
+    return 0
+  elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    echo -e "${YELLOW}Opening ports in firewalld...${NC}"
+    firewall-cmd --permanent --add-port="${APP_PORT}/tcp" >/dev/null
+    firewall-cmd --permanent --add-port="${APP_DASHBOARD_PORT}/tcp" >/dev/null
+    firewall-cmd --permanent --add-port="${APP_METRICS_PORT}/tcp" >/dev/null
+    firewall-cmd --reload >/dev/null
+    echo -e "${GREEN}Opened ports ${APP_PORT}, ${APP_DASHBOARD_PORT}, ${APP_METRICS_PORT} in firewalld.${NC}"
+    return 0
+  elif command -v iptables >/dev/null 2>&1; then
+    echo -e "${YELLOW}Opening ports via iptables...${NC}"
+    iptables -I INPUT -p tcp --dport "${APP_PORT}" -j ACCEPT
+    iptables -I INPUT -p tcp --dport "${APP_DASHBOARD_PORT}" -j ACCEPT
+    iptables -I INPUT -p tcp --dport "${APP_METRICS_PORT}" -j ACCEPT
+    if command -v iptables-save >/dev/null 2>&1; then
+      iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+    fi
+    echo -e "${GREEN}Opened ports ${APP_PORT}, ${APP_DASHBOARD_PORT}, ${APP_METRICS_PORT} via iptables.${NC}"
+    return 0
+  fi
+  return 1
+}
+
+if open_firewall_ports; then
+  :
+else
+  echo -e "${YELLOW}No active firewall detected. Skipping port configuration.${NC}"
 fi
 
 DASHBOARD_DISPLAY_PORT="$(awk -F': *' '/^dashboard_port:/ {gsub(/"/, "", $2); print $2; exit}' "${CONFIG_FILE}")"

@@ -11,6 +11,10 @@
   <a href="https://github.com/SadeghPM/pusher-server-go/blob/main/LICENSE"><img src="https://img.shields.io/github/license/SadeghPM/pusher-server-go?style=flat-square&color=FF2D20" alt="License"></a>
 </p>
 
+<p align="center">
+  <img src="screenshot/screenshot.png" alt="Pusher Server Go Dashboard" width="800">
+</p>
+
 ---
 
 ## About Pusher Server Go
