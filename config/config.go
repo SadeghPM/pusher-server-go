@@ -275,15 +275,17 @@ func (m *Manager) buildMaps() {
 	m.appsByKey = appsByKey
 }
 
-func (m *Manager) Reload() error {
+// loadConfigFile reads, parses, normalizes and validates the config file
+// without publishing it.
+func (m *Manager) loadConfigFile() (*Config, error) {
 	data, err := os.ReadFile(m.filename)
 	if err != nil {
-		return fmt.Errorf("failed to read config file %q: %w", m.filename, err)
+		return nil, fmt.Errorf("failed to read config file %q: %w", m.filename, err)
 	}
 
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return fmt.Errorf("failed to parse config file %q: %w", m.filename, err)
+		return nil, fmt.Errorf("failed to parse config file %q: %w", m.filename, err)
 	}
 
 	if cfg.Port == "" {
@@ -298,22 +300,50 @@ func (m *Manager) Reload() error {
 
 	host, err := normalizeHost(cfg.Host, cfg.Port)
 	if err != nil {
-		return fmt.Errorf("invalid host in config file %q: %w", m.filename, err)
+		return nil, fmt.Errorf("invalid host in config file %q: %w", m.filename, err)
 	}
 	cfg.Host = host
 
 	if err := validateConfig(&cfg); err != nil {
-		return fmt.Errorf("invalid config file %q: %w", m.filename, err)
+		return nil, fmt.Errorf("invalid config file %q: %w", m.filename, err)
+	}
+
+	return &cfg, nil
+}
+
+func (m *Manager) Reload() error {
+	return m.ReloadWithHook(nil)
+}
+
+// ReloadWithHook reloads the configuration. When non-nil, beforeApply runs
+// after the new file has been validated but before it replaces the current
+// configuration. It receives cloned app lists so callers can tear down
+// removed or rotated tenants while the old config is still visible to the
+// webhook dispatcher.
+func (m *Manager) ReloadWithHook(beforeApply func(previous, next []AppConfig)) error {
+	cfg, err := m.loadConfigFile()
+	if err != nil {
+		return err
+	}
+
+	if beforeApply != nil {
+		m.mu.RLock()
+		var previous []AppConfig
+		if m.config != nil {
+			previous = cloneApps(m.config.Apps)
+		}
+		m.mu.RUnlock()
+		beforeApply(previous, cloneApps(cfg.Apps))
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.config != nil && reflect.DeepEqual(m.config, &cfg) {
+	if m.config != nil && reflect.DeepEqual(m.config, cfg) {
 		return nil
 	}
 
-	m.config = &cfg
+	m.config = cfg
 	m.buildMaps()
 
 	slog.Info("Configuration reloaded successfully", "filename", m.filename)
@@ -519,7 +549,15 @@ func (m *Manager) saveConfigLocked(cfg *Config) error {
 	dir := filepath.Dir(m.filename)
 	tmp, err := os.CreateTemp(dir, ".config-*.yaml")
 	if err != nil {
-		return fmt.Errorf("failed to create temporary config file: %w", err)
+		// A single-file Docker bind mount can make the directory read-only.
+		// Writing the mounted file in place still works and keeps dashboard
+		// app management usable.
+		if writeErr := writeConfigFile(m.filename, data); writeErr != nil {
+			return fmt.Errorf("failed to create temporary config file: %v (in-place write also failed: %w)", err, writeErr)
+		}
+		slog.Warn("Could not create a temporary config file; wrote config in place",
+			"filename", m.filename, "error", err)
+		return nil
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
@@ -540,7 +578,33 @@ func (m *Manager) saveConfigLocked(cfg *Config) error {
 		return fmt.Errorf("failed to close config file %q: %w", m.filename, err)
 	}
 	if err := os.Rename(tmpName, m.filename); err != nil {
-		return fmt.Errorf("failed to replace config file %q: %w", m.filename, err)
+		// Renaming over a single-file bind mount fails with EBUSY, which
+		// breaks app create/update/delete in Docker. Fall back to rewriting
+		// the existing inode in place instead of failing the operation.
+		if writeErr := writeConfigFile(m.filename, data); writeErr != nil {
+			return fmt.Errorf("failed to replace config file %q: %v (in-place write also failed: %w)", m.filename, err, writeErr)
+		}
+		slog.Warn("Config file could not be replaced atomically; wrote it in place",
+			"filename", m.filename, "error", err)
 	}
 	return nil
+}
+
+// writeConfigFile writes data directly to filename, truncating it in place.
+// It is the fallback for filesystems where replacing the file with rename(2)
+// is not possible, such as a single-file Docker bind mount.
+func writeConfigFile(filename string, data []byte) error {
+	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }

@@ -59,6 +59,40 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 }
 
+func TestReconcileAppHubsDisconnectsRemovedAndRotatedApps(t *testing.T) {
+	global := core.NewGlobalHub(nil, nil)
+
+	kept := global.GetOrCreateAppHub("kept")
+	global.GetOrCreateAppHub("rotated")
+	global.GetOrCreateAppHub("removed")
+
+	previous := []config.AppConfig{
+		{AppID: "kept", AppKey: "key-1", AppSecret: "secret-1"},
+		{AppID: "rotated", AppKey: "key-1", AppSecret: "secret-1"},
+		{AppID: "removed", AppKey: "key-1", AppSecret: "secret-1"},
+	}
+	current := []config.AppConfig{
+		// Origin/webhook edits must not disconnect anyone.
+		{AppID: "kept", AppKey: "key-1", AppSecret: "secret-1", AllowedOrigins: []string{"https://example.com"}},
+		// A rotated key must force existing clients to reconnect.
+		{AppID: "rotated", AppKey: "key-2", AppSecret: "secret-2"},
+	}
+
+	reconcileAppHubs(global, previous, current)
+
+	if got := global.GetAppHub("kept"); got != kept {
+		t.Error("Expected the hub of an unchanged app to survive the reload")
+	}
+	if got := global.GetAppHub("rotated"); got != nil {
+		t.Error("Expected the hub of an app with rotated credentials to be removed")
+	}
+	if got := global.GetAppHub("removed"); got != nil {
+		t.Error("Expected the hub of a removed app to be removed")
+	}
+
+	kept.Close()
+}
+
 func TestUnknownPathReturns404(t *testing.T) {
 	ts := httptest.NewServer(newTestMux())
 	defer ts.Close()

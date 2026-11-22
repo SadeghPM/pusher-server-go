@@ -3,9 +3,32 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
+
+type recordingDispatcher struct {
+	mu     sync.Mutex
+	events []WebhookEvent
+}
+
+func (d *recordingDispatcher) Dispatch(_ string, events []WebhookEvent) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.events = append(d.events, events...)
+}
+
+func (d *recordingDispatcher) eventNames() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	names := make([]string, len(d.events))
+	for i, event := range d.events {
+		names[i] = event.Name
+	}
+	return names
+}
 
 func TestAppHubRegistration(t *testing.T) {
 	hub := NewAppHub("test-app", nil)
@@ -183,6 +206,91 @@ func TestAppHubCloseIsIdempotent(t *testing.T) {
 
 	if len(hub.clients) != 0 {
 		t.Errorf("Expected no clients after close, got %d", len(hub.clients))
+	}
+}
+
+func TestHubCloseFlushesCleanupWebhooksBeforeStoppingQueue(t *testing.T) {
+	dispatcher := &recordingDispatcher{}
+	hub := NewAppHub("test-app", dispatcher)
+
+	client := &Client{SocketID: "1.1", Send: make(chan []byte, 8)}
+	hub.RegisterClient(client)
+	if _, accepted := hub.Subscribe(client, "presence-chat", &ChannelMember{UserID: "user-1"}); !accepted {
+		t.Fatal("Expected presence subscription to be accepted")
+	}
+
+	// Close must wait for the read pump's unregister work even though this
+	// test client has no real connection.
+	hub.Close()
+
+	got := dispatcher.eventNames()
+	want := []string{"channel_occupied", "member_removed", "channel_vacated"}
+	if len(got) != len(want) {
+		t.Fatalf("Dispatched webhooks = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Dispatched webhooks = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestAsyncBroadcastsPreserveOrder(t *testing.T) {
+	hub := NewAppHub("test-app", nil)
+	defer hub.Close()
+
+	client := &Client{SocketID: "1.1", Send: make(chan []byte, 4)}
+	hub.RegisterClient(client)
+	hub.Subscribe(client, "ordered-channel", nil)
+
+	hub.BroadcastToChannelAsync("ordered-channel", []byte("first"), "")
+	hub.BroadcastToChannelAsync("ordered-channel", []byte("second"), "")
+
+	for _, want := range []string{"first", "second"} {
+		select {
+		case msg := <-client.Send:
+			if string(msg) != want {
+				t.Fatalf("Broadcast order = %q, want %q", msg, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("Timed out waiting for %q", want)
+		}
+	}
+}
+
+func TestSubscribeAckIsQueuedBeforeChannelBroadcasts(t *testing.T) {
+	hub := NewAppHub("test-app", nil)
+	defer hub.Close()
+
+	client := &Client{SocketID: "1.1", Send: make(chan []byte, 4)}
+	hub.RegisterClient(client)
+
+	enqueued := make(chan struct{})
+	started := make(chan struct{})
+	go func() {
+		<-started
+		hub.BroadcastToChannelAsync("ordering", []byte("broadcast"), "")
+		close(enqueued)
+	}()
+
+	_, accepted := hub.TrySubscribeWithAck(client, "ordering", nil, func(map[string]json.RawMessage) {
+		close(started)
+		<-enqueued
+		client.TrySend([]byte("ack"))
+	})
+	if !accepted {
+		t.Fatal("Expected subscription to be accepted")
+	}
+
+	for _, want := range []string{"ack", "broadcast"} {
+		select {
+		case msg := <-client.Send:
+			if string(msg) != want {
+				t.Fatalf("Message order = %q, want %q", msg, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("Timed out waiting for %q", want)
+		}
 	}
 }
 

@@ -6,5 +6,5 @@ services:
       - "5174:5174"
       - "9601:9601"
     volumes:
-      - ./config.yaml:/usr/local/bin/config.yaml
+      - ./config.yaml:/app/config.yaml
     restart: unless-stopped

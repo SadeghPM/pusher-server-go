@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"pusher-clone/config"
@@ -28,6 +29,10 @@ type Dispatcher struct {
 	configManager *config.Manager
 	client        *http.Client
 	Debugger      core.DebugNotifier
+
+	// inFlight tracks webhook deliveries so a graceful shutdown can wait for
+	// them instead of exiting while requests are still running.
+	inFlight sync.WaitGroup
 }
 
 func NewDispatcher(manager *config.Manager, debugger core.DebugNotifier) *Dispatcher {
@@ -120,9 +125,19 @@ func (d *Dispatcher) Dispatch(appID string, events []core.WebhookEvent) {
 		// Config loading and the dashboard API validate webhook URLs before
 		// storing them. The HTTP client re-validates every resolved address at
 		// dial time, so no blocking DNS lookup is needed here (this runs on the
-		// hub's bounded work queue).
-		go d.sendWebhook(webhookURL, body, appCfg.AppKey, signature, appID)
+		// hub's ordered work queue).
+		d.inFlight.Add(1)
+		go func(url string) {
+			defer d.inFlight.Done()
+			d.sendWebhook(url, body, appCfg.AppKey, signature, appID)
+		}(webhookURL)
 	}
+}
+
+// Wait blocks until all webhook deliveries started by Dispatch have finished.
+// Call it after the hubs have been closed and their work queues drained.
+func (d *Dispatcher) Wait() {
+	d.inFlight.Wait()
 }
 
 func (d *Dispatcher) sendWebhook(url string, body []byte, appKey, signature, appID string) {

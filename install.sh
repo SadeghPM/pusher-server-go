@@ -40,9 +40,10 @@ fi
 
 ARCH="$(uname -m)"
 case "${ARCH}" in
-  x86_64) ARCH="x86_64" ;;
+  x86_64|amd64) ARCH="x86_64" ;;
+  aarch64|arm64) ARCH="arm64" ;;
   *)
-    die "Prebuilt releases are currently available for Linux x86_64 only. Build from source for ${ARCH}."
+    die "Prebuilt releases are currently available for Linux x86_64 and arm64 only. Build from source for ${ARCH}."
     ;;
 esac
 
@@ -266,37 +267,35 @@ APP_METRICS_PORT="${APP_METRICS_PORT:-9601}"
 APP_DASHBOARD_PORT="${APP_DASHBOARD_PORT:-5174}"
 
 open_firewall_ports() {
-  if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "active"; then
-    echo -e "${YELLOW}Opening ports in ufw...${NC}"
+  # Only the Pusher endpoint is public. The dashboard is authenticated but
+  # still administrative, and /metrics has no authentication at all, so both
+  # must stay behind an SSH tunnel or a reverse proxy.
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
+    echo -e "${YELLOW}Opening the Pusher port in ufw...${NC}"
     ufw allow "${APP_PORT}/tcp" >/dev/null
-    ufw allow "${APP_DASHBOARD_PORT}/tcp" >/dev/null
-    ufw allow "${APP_METRICS_PORT}/tcp" >/dev/null
-    echo -e "${GREEN}Opened ports ${APP_PORT}, ${APP_DASHBOARD_PORT}, ${APP_METRICS_PORT} in ufw.${NC}"
+    echo -e "${GREEN}Opened port ${APP_PORT} in ufw.${NC}"
     return 0
   elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-    echo -e "${YELLOW}Opening ports in firewalld...${NC}"
+    echo -e "${YELLOW}Opening the Pusher port in firewalld...${NC}"
     firewall-cmd --permanent --add-port="${APP_PORT}/tcp" >/dev/null
-    firewall-cmd --permanent --add-port="${APP_DASHBOARD_PORT}/tcp" >/dev/null
-    firewall-cmd --permanent --add-port="${APP_METRICS_PORT}/tcp" >/dev/null
     firewall-cmd --reload >/dev/null
-    echo -e "${GREEN}Opened ports ${APP_PORT}, ${APP_DASHBOARD_PORT}, ${APP_METRICS_PORT} in firewalld.${NC}"
+    echo -e "${GREEN}Opened port ${APP_PORT} in firewalld.${NC}"
     return 0
   elif command -v iptables >/dev/null 2>&1; then
-    echo -e "${YELLOW}Opening ports via iptables...${NC}"
+    echo -e "${YELLOW}Opening the Pusher port via iptables...${NC}"
     iptables -I INPUT -p tcp --dport "${APP_PORT}" -j ACCEPT
-    iptables -I INPUT -p tcp --dport "${APP_DASHBOARD_PORT}" -j ACCEPT
-    iptables -I INPUT -p tcp --dport "${APP_METRICS_PORT}" -j ACCEPT
     if command -v iptables-save >/dev/null 2>&1; then
       iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
     fi
-    echo -e "${GREEN}Opened ports ${APP_PORT}, ${APP_DASHBOARD_PORT}, ${APP_METRICS_PORT} via iptables.${NC}"
+    echo -e "${GREEN}Opened port ${APP_PORT} via iptables.${NC}"
     return 0
   fi
   return 1
 }
 
 if open_firewall_ports; then
-  :
+  echo -e "${YELLOW}Dashboard (${APP_DASHBOARD_PORT}) and metrics (${APP_METRICS_PORT}) were not opened.${NC}"
+  echo -e "${YELLOW}Reach the dashboard through an SSH tunnel or a reverse proxy; never expose metrics publicly.${NC}"
 else
   echo -e "${YELLOW}No active firewall detected. Skipping port configuration.${NC}"
 fi

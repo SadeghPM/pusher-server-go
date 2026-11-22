@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -20,11 +22,18 @@ import (
 )
 
 const (
-	writeWait      = 10 * time.Second
-	pongWait       = 120 * time.Second
-	pingPeriod     = 60 * time.Second
+	writeWait  = 10 * time.Second
+	pongWait   = 120 * time.Second
+	pingPeriod = 60 * time.Second
+	// readGrace gives clients that use activity_timeout instead of control
+	// pongs a margin before the read deadline expires. Without it, a client
+	// pinging exactly at 120s races the server's own deadline.
+	readGrace      = 30 * time.Second
 	maxMessageSize = 8192
 
+	// errorCodeApplicationNotFound is the Pusher protocol code for an app
+	// that no longer exists (for example, after it was removed from config).
+	errorCodeApplicationNotFound = 4001
 	// errorCodeUnauthorized is the Pusher protocol code for authentication
 	// failures. See the Pusher Channels Protocol documentation.
 	errorCodeUnauthorized = 4009
@@ -54,6 +63,59 @@ type PusherUnsubscribeData struct {
 type ChannelData struct {
 	UserID   string          `json:"user_id"`
 	UserInfo json.RawMessage `json:"user_info,omitempty"`
+}
+
+// UnmarshalJSON accepts both string and integer user_id values. Laravel's
+// Pusher broadcaster sends the authenticated model's primary key directly, so
+// integer IDs are common even though the Pusher protocol documents user_id as
+// a string. Numeric IDs are normalized to their decimal string form.
+func (c *ChannelData) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		UserID   json.RawMessage `json:"user_id"`
+		UserInfo json.RawMessage `json:"user_info"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	userID, err := parsePresenceUserID(raw.UserID)
+	if err != nil {
+		return err
+	}
+
+	c.UserID = userID
+	c.UserInfo = raw.UserInfo
+	return nil
+}
+
+func parsePresenceUserID(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "", fmt.Errorf("user_id is required")
+	}
+
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return "", err
+	}
+
+	switch v := value.(type) {
+	case string:
+		return v, nil
+	case json.Number:
+		literal := v.String()
+		// Accept integer identifiers only; a float or exponent is not a
+		// meaningful user ID and would not match Pusher's string convention.
+		if _, err := strconv.ParseInt(literal, 10, 64); err != nil {
+			if _, err := strconv.ParseUint(literal, 10, 64); err != nil {
+				return "", fmt.Errorf("user_id must be a string or integer")
+			}
+		}
+		return literal, nil
+	default:
+		return "", fmt.Errorf("user_id must be a string or integer")
+	}
 }
 
 type Server struct {
@@ -160,9 +222,9 @@ func (s *Server) readPump(client *core.Client, appKey string) {
 	}()
 
 	client.Conn.SetReadLimit(maxMessageSize)
-	client.Conn.SetReadDeadline(time.Now().Add(pongWait))
+	client.Conn.SetReadDeadline(time.Now().Add(pongWait + readGrace))
 	client.Conn.SetPongHandler(func(string) error {
-		client.Conn.SetReadDeadline(time.Now().Add(pongWait))
+		client.Conn.SetReadDeadline(time.Now().Add(pongWait + readGrace))
 		return nil
 	})
 
@@ -186,6 +248,10 @@ func (s *Server) readPump(client *core.Client, appKey string) {
 			break
 		}
 
+		// Any frame from the client proves the connection is alive. Pusher
+		// clients commonly send pusher:ping instead of relying on control
+		// pongs, so only extending the deadline on pong would disconnect them.
+		client.Conn.SetReadDeadline(time.Now().Add(pongWait + readGrace))
 		s.handleMessage(client, message, appKey)
 	}
 }
@@ -242,8 +308,8 @@ func (s *Server) handlePing(client *core.Client, debug bool) {
 			"event", "pusher:ping",
 		)
 	}
-	// TrySend: if the buffer is full the client is stalled; dropping the pong
-	// is better than blocking the read pump behind a dead connection.
+	// TrySend disconnects a stalled client instead of blocking the read pump
+	// behind a full send buffer.
 	client.TrySend(core.MarshalEvent("pusher:pong", "", core.EncodeDataString(struct{}{}), ""))
 }
 
@@ -252,6 +318,9 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appKey 
 	debug := cfg != nil && cfg.Debug
 	appCfg := s.configManager.GetAppByKey(appKey)
 	if appCfg == nil {
+		// The app was removed or its key was rotated while this connection was
+		// alive. Tell the client so it reconnects instead of waiting forever.
+		s.sendError(client, errorCodeApplicationNotFound, "Application does not exist.")
 		return
 	}
 	appSecret := appCfg.AppSecret
@@ -331,7 +400,23 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appKey 
 		}
 	}
 
-	isNewUser, accepted := client.AppHub.TrySubscribe(client, subData.Channel, member)
+	ack := func(members map[string]json.RawMessage) {
+		if isPresence {
+			s.sendPresenceSubscriptionSuccess(client, subData.Channel, members)
+			return
+		}
+		successPayload := core.MarshalEvent(
+			"pusher_internal:subscription_succeeded",
+			subData.Channel,
+			core.EncodeDataString(struct{}{}),
+			"",
+		)
+		client.TrySend(successPayload)
+	}
+
+	// The ack is queued while the hub lock is held, so a concurrent broadcast
+	// cannot reach this client before subscription_succeeded.
+	isNewUser, accepted := client.AppHub.TrySubscribeWithAck(client, subData.Channel, member, ack)
 	if !accepted {
 		s.sendError(client, errorCodeOverCapacity, "Presence channel is full.")
 		return
@@ -356,19 +441,35 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appKey 
 		}
 	}
 
-	if isPresence {
-		s.handlePresenceSubscriptionSuccess(client, subData.Channel, member, isNewUser)
-	} else {
-		successPayload := core.MarshalEvent(
-			"pusher_internal:subscription_succeeded",
+	s.globalHub.Debugger.Notify(client.AppHub.AppID(), "subscription", client.SocketID, subData.Channel, "", "")
+
+	if isPresence && isNewUser && member != nil {
+		userInfo := member.UserInfo
+		if len(userInfo) == 0 {
+			userInfo = json.RawMessage(`{}`)
+		}
+
+		memberData := map[string]interface{}{
+			"user_id":   member.UserID,
+			"user_info": userInfo,
+		}
+		memberAddedPayload := core.MarshalEvent(
+			"pusher_internal:member_added",
 			subData.Channel,
-			core.EncodeDataString(struct{}{}),
+			core.EncodeDataString(memberData),
 			"",
 		)
-		// TrySend: drop the reply rather than block the read pump if the client
-		// is stalled.
-		client.TrySend(successPayload)
-		s.globalHub.Debugger.Notify(client.AppHub.AppID(), "subscription", client.SocketID, subData.Channel, "", "")
+		// Queue broadcast and webhook together so the ordered worker delivers
+		// member_added before any later member_removed for this channel.
+		client.AppHub.BroadcastToChannelAsync(subData.Channel, memberAddedPayload, client.SocketID)
+
+		client.AppHub.DispatchWebhook([]core.WebhookEvent{
+			{
+				Name:    "member_added",
+				Channel: subData.Channel,
+				UserID:  member.UserID,
+			},
+		})
 	}
 }
 
@@ -411,14 +512,14 @@ func (s *Server) sendError(client *core.Client, code int, message string) {
 		core.EncodeDataString(data),
 		"",
 	)
-	// TrySend: drop the error rather than block the read pump if the client
-	// is stalled.
+	// TrySend disconnects a stalled client rather than blocking the read pump.
 	client.TrySend(payload)
 }
 
-func (s *Server) handlePresenceSubscriptionSuccess(client *core.Client, channel string, member *core.ChannelMember, isNewUser bool) {
-	membersMap := client.AppHub.GetPresenceMembers(channel)
-
+// sendPresenceSubscriptionSuccess builds and queues the presence member
+// snapshot. It is called from TrySubscribeWithAck while the hub lock is held,
+// so the snapshot and the frame are consistent with the new subscription.
+func (s *Server) sendPresenceSubscriptionSuccess(client *core.Client, channel string, membersMap map[string]json.RawMessage) {
 	ids := make([]string, 0, len(membersMap))
 	hash := make(map[string]json.RawMessage, len(membersMap))
 	for id, info := range membersMap {
@@ -445,38 +546,7 @@ func (s *Server) handlePresenceSubscriptionSuccess(client *core.Client, channel 
 		core.EncodeDataString(presenceHash),
 		"",
 	)
-	// TrySend: drop the reply rather than block the read pump if the client
-	// is stalled.
 	client.TrySend(successPayload)
-
-	s.globalHub.Debugger.Notify(client.AppHub.AppID(), "subscription", client.SocketID, channel, "", "")
-
-	if isNewUser && member != nil {
-		userInfo := member.UserInfo
-		if len(userInfo) == 0 {
-			userInfo = json.RawMessage(`{}`)
-		}
-
-		memberData := map[string]interface{}{
-			"user_id":   member.UserID,
-			"user_info": userInfo,
-		}
-		memberAddedPayload := core.MarshalEvent(
-			"pusher_internal:member_added",
-			channel,
-			core.EncodeDataString(memberData),
-			"",
-		)
-		client.AppHub.BroadcastToChannel(channel, memberAddedPayload, client.SocketID)
-
-		client.AppHub.DispatchWebhook([]core.WebhookEvent{
-			{
-				Name:    "member_added",
-				Channel: channel,
-				UserID:  member.UserID,
-			},
-		})
-	}
 }
 
 func (s *Server) handleUnsubscribe(client *core.Client, event PusherEvent, debug bool) {

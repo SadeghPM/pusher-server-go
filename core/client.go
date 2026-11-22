@@ -1,10 +1,13 @@
 package core
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"pusher-clone/metrics"
 )
 
 type Client struct {
@@ -40,22 +43,51 @@ func NewClient(appHub *AppHub, conn *websocket.Conn, socketID string) *Client {
 }
 
 // TrySend queues msg on the outbound channel without blocking. It returns
-// false when the client is closing or its buffer is full, in which case the
-// message is dropped. Dropping keeps the read pump responsive: a stalled
-// client cannot wedge its read loop behind a full buffer.
+// false when the client is closing. If the outbound buffer is full, the client
+// is disconnected: silently dropping frames would corrupt the event stream for
+// a client that later catches up, so reconnecting is the safer behavior.
 func (c *Client) TrySend(msg []byte) bool {
 	c.sendMu.RLock()
-	defer c.sendMu.RUnlock()
-
 	if c.sendClosed {
+		c.sendMu.RUnlock()
 		return false
 	}
 
 	select {
 	case c.Send <- msg:
+		c.sendMu.RUnlock()
 		return true
 	default:
+		c.sendMu.RUnlock()
+		c.disconnectSlowClient()
 		return false
+	}
+}
+
+// disconnectSlowClient closes a client whose outbound buffer is full. It is
+// idempotent and safe to call while other goroutines are sending.
+func (c *Client) disconnectSlowClient() {
+	c.sendMu.Lock()
+	if c.sendClosed {
+		c.sendMu.Unlock()
+		return
+	}
+	c.sendClosed = true
+	close(c.Send)
+	c.sendMu.Unlock()
+
+	appID := ""
+	if c.AppHub != nil {
+		appID = c.AppHub.AppID()
+	}
+	metrics.MessagesDroppedTotal.WithLabelValues(appID, "client_buffer_full").Inc()
+	slog.Warn("Disconnecting slow client: send buffer full",
+		"app_id", appID,
+		"socket_id", c.SocketID,
+	)
+
+	if c.Conn != nil {
+		c.Conn.Close()
 	}
 }
 

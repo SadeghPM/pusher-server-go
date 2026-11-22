@@ -72,6 +72,23 @@ func newRootMux(wsServer *server.Server, restAPI *api.API, manager *config.Manag
 	return mux
 }
 
+// reconcileAppHubs disconnects tenants that disappeared or whose credentials
+// changed during a config reload. Editing origins or webhooks keeps existing
+// connections alive.
+func reconcileAppHubs(globalHub *core.GlobalHub, previous, current []config.AppConfig) {
+	currentByID := make(map[string]config.AppConfig, len(current))
+	for _, app := range current {
+		currentByID[app.AppID] = app
+	}
+
+	for _, oldApp := range previous {
+		newApp, ok := currentByID[oldApp.AppID]
+		if !ok || oldApp.AppKey != newApp.AppKey || oldApp.AppSecret != newApp.AppSecret {
+			globalHub.RemoveAppHub(oldApp.AppID)
+		}
+	}
+}
+
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to the YAML configuration file")
 	flag.Parse()
@@ -98,6 +115,14 @@ func main() {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
+
+	// Set up the debug observer, webhook dispatcher and global hub before the
+	// config watcher so a hot reload can tear down hubs for removed or rotated
+	// apps.
+	debugObserver := dashboard.NewObserver()
+	notifier := dashboard.NewNotifierAdapter(debugObserver)
+	webhookDispatcher := webhook.NewDispatcher(manager, notifier)
+	globalHub := core.NewGlobalHub(webhookDispatcher, notifier)
 
 	// Setup Hot-Reload via File Watcher using fsnotify. Watch the containing
 	// directory rather than the file itself so editors that save by renaming
@@ -153,7 +178,12 @@ func main() {
 			case <-reloadC:
 				reloadC = nil
 				slog.Info("Detected config change, auto-reloading configuration", "filename", *configPath)
-				if err := manager.Reload(); err != nil {
+				// Tear down removed/rotated tenants before the new config is
+				// published, while the dispatcher can still find their webhook
+				// URLs and signing secrets.
+				if err := manager.ReloadWithHook(func(previous, next []config.AppConfig) {
+					reconcileAppHubs(globalHub, previous, next)
+				}); err != nil {
 					slog.Error("Failed to auto-reload configuration", "error", err)
 					continue
 				}
@@ -166,13 +196,6 @@ func main() {
 			}
 		}
 	}()
-
-	// Setup Debug Observer and NotifierAdapter
-	debugObserver := dashboard.NewObserver()
-	notifier := dashboard.NewNotifierAdapter(debugObserver)
-
-	webhookDispatcher := webhook.NewDispatcher(manager, notifier)
-	globalHub := core.NewGlobalHub(webhookDispatcher, notifier)
 
 	dashServer := dashboard.NewServer(debugObserver, manager, globalHub)
 	go dashServer.Start(ctx)
@@ -233,8 +256,10 @@ func main() {
 		slog.Error("Metrics server shutdown error", "error", err)
 	}
 
-	// Close all AppHub work queues
+	// Close all AppHubs, then wait for webhook deliveries that the shutdown
+	// cleanup enqueued (member_removed/channel_vacated) to finish.
 	globalHub.Close()
+	webhookDispatcher.Wait()
 
 	slog.Info("All servers stopped gracefully")
 }

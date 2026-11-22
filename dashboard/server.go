@@ -565,13 +565,17 @@ func (s *Server) handleDeleteApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Tear down the tenant's hub before deleting its config: the cleanup
+	// member_removed/channel_vacated webhooks can only be signed and delivered
+	// while the app's key, secret and webhook URLs are still configured.
+	s.globalHub.RemoveAppHub(req.AppID)
+
 	if err := s.configManager.DeleteApp(req.AppID); err != nil {
 		http.Error(w, err.Error(), appErrorStatus(err))
 		return
 	}
 
-	// Tear down the tenant's hub so connected clients are disconnected and a
-	// recreated app with the same ID starts from a clean state.
+	// Catch any connection that raced in while the old hub was being closed.
 	s.globalHub.RemoveAppHub(req.AppID)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -689,8 +693,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	ch := s.observer.Subscribe()
-	defer s.observer.Unsubscribe(ch)
+	ch := s.observer.Subscribe(appID)
+	defer s.observer.Unsubscribe(appID, ch)
 
 	// Read (and discard) client frames so a closed browser tab is noticed and
 	// the subscriber is removed promptly instead of leaking a goroutine.
@@ -718,9 +722,6 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		case event, ok := <-ch:
 			if !ok {
 				return
-			}
-			if event.AppID != appID {
-				continue
 			}
 			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := conn.WriteJSON(event); err != nil {

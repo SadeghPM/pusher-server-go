@@ -44,11 +44,11 @@ To download, configure, and install Pusher Server Go as a systemd service on Lin
 curl -sSL https://raw.githubusercontent.com/SadeghPM/pusher-server-go/main/install.sh | sudo bash
 ```
 
-The script installs the latest Linux x86_64 release, prompts you for configuration details (including the public Pusher URL), creates a `config.yaml` file under `/opt/pusher-clone/config.yaml`, and sets up a systemd service to run it. The downloaded archive is verified against the release's `checksums.txt` with SHA-256 before it is extracted. On other platforms, build from source with `go build .`.
+The script installs the latest Linux x86_64 or arm64 release, prompts you for configuration details (including the public Pusher URL), creates a `config.yaml` file under `/opt/pusher-clone/config.yaml`, and sets up a systemd service to run it. The downloaded archive is verified against the release's `checksums.txt` with SHA-256 before it is extracted. Only the Pusher port is opened in the firewall; the dashboard and metrics ports are left closed so they can be reached through an SSH tunnel or a reverse proxy. On other platforms, build from source with `go build .`.
 
 ### Method 2: Manual Binary Installation
 
-1. Download the latest Linux x86_64 binary from the [GitHub Releases](https://github.com/SadeghPM/pusher-server-go/releases) page, or build from source with `go build .`.
+1. Download the latest Linux x86_64 or arm64 binary from the [GitHub Releases](https://github.com/SadeghPM/pusher-server-go/releases) page, or build from source with `go build .`.
 2. Place the binary in your desired installation directory (e.g., `/usr/local/bin` or `/opt/pusher-clone`).
 3. Create a `config.yaml` file in the same directory. Here is an example configuration:
 
@@ -95,7 +95,7 @@ Create a `config.yaml` (see the example above), then run:
 ```bash
 docker run -d \
   -p 6001:6001 -p 5174:5174 -p 9601:9601 \
-  -v ./config.yaml:/usr/local/bin/config.yaml \
+  -v ./config.yaml:/app/config.yaml \
   ghcr.io/sadeghpm/pusher-server-go:latest
 ```
 
@@ -104,6 +104,8 @@ Or use the included `docker-compose.yml`:
 ```bash
 docker compose up -d
 ```
+
+The image reads `/app/config.yaml`. Keep the mounted file writable: the dashboard creates, updates and deletes apps by rewriting it. The server falls back to an in-place write when Docker's single-file bind mount rejects an atomic rename.
 
 ---
 
@@ -147,6 +149,7 @@ The following metrics are exported:
 | `pusher_messages_published_total` | Counter | Total number of messages published per app. |
 | `pusher_rest_api_events_total` | Counter | Total number of events published via the REST API per app. |
 | `pusher_websocket_errors_total` | Counter | Total number of WebSocket errors per app (broken down by read/write/ping). |
+| `pusher_messages_dropped_total` | Counter | Messages dropped because a client's send buffer was full (per app; the slow client is disconnected). |
 
 ---
 

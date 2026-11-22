@@ -45,4 +45,12 @@ var (
 		},
 		[]string{"app_id"},
 	)
+
+	MessagesDroppedTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "pusher_messages_dropped_total",
+			Help: "Total number of messages dropped per app and reason",
+		},
+		[]string{"app_id", "reason"},
+	)
 )

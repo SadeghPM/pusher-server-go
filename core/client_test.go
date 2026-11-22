@@ -6,6 +6,32 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+func TestTrySendDisconnectsWhenBufferIsFull(t *testing.T) {
+	appHub := NewAppHub("test-app", nil)
+	defer appHub.Close()
+
+	client := &Client{
+		AppHub:   appHub,
+		SocketID: "1.1",
+		Send:     make(chan []byte, 1),
+	}
+	client.Send <- []byte("first")
+
+	if client.TrySend([]byte("second")) {
+		t.Fatal("Expected TrySend to fail when the outbound buffer is full")
+	}
+	if !client.sendClosed {
+		t.Fatal("Expected a full buffer to close the client")
+	}
+
+	if msg, ok := <-client.Send; !ok || string(msg) != "first" {
+		t.Fatalf("Expected the buffered message to remain readable, got %q (ok=%v)", msg, ok)
+	}
+	if _, ok := <-client.Send; ok {
+		t.Fatal("Expected the send channel to be closed")
+	}
+}
+
 func TestNewClient(t *testing.T) {
 	appHub := NewAppHub("test-app", nil)
 	var conn *websocket.Conn = nil

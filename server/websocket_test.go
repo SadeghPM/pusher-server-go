@@ -883,6 +883,163 @@ func TestClientEventBroadcastPresenceChannel(t *testing.T) {
 	}
 }
 
+func TestChannelDataUserIDTypes(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{name: "string", input: `{"user_id":"john"}`, want: "john"},
+		{name: "integer", input: `{"user_id":42}`, want: "42"},
+		{name: "max uint64", input: `{"user_id":18446744073709551615}`, want: "18446744073709551615"},
+		{name: "float", input: `{"user_id":4.2}`, wantErr: true},
+		{name: "boolean", input: `{"user_id":true}`, wantErr: true},
+		{name: "missing", input: `{}`, wantErr: true},
+		{name: "null", input: `{"user_id":null}`, wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var data ChannelData
+			err := json.Unmarshal([]byte(tc.input), &data)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("Expected %s to be rejected, got user_id %q", tc.input, data.UserID)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Expected %s to be accepted: %v", tc.input, err)
+			}
+			if data.UserID != tc.want {
+				t.Errorf("user_id = %q, want %q", data.UserID, tc.want)
+			}
+		})
+	}
+}
+
+func TestSubscribePresenceWithNumericUserID(t *testing.T) {
+	ts, _, _, appKey, appSecret := setupTestServer()
+	defer ts.Close()
+
+	ws, _, err := connectWebSocket(ts, appKey)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer ws.Close()
+
+	ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, payload, err := ws.ReadMessage()
+	if err != nil {
+		t.Fatalf("Failed to read connection_established: %v", err)
+	}
+
+	var connEvent PusherEvent
+	if err := json.Unmarshal(payload, &connEvent); err != nil {
+		t.Fatalf("Failed to unmarshal connection_established: %v", err)
+	}
+	var connDataStr string
+	if err := json.Unmarshal(connEvent.Data, &connDataStr); err != nil {
+		t.Fatalf("Failed to unmarshal connection data: %v", err)
+	}
+	var connData map[string]any
+	if err := json.Unmarshal([]byte(connDataStr), &connData); err != nil {
+		t.Fatalf("Failed to parse connection data: %v", err)
+	}
+	socketID, _ := connData["socket_id"].(string)
+	if socketID == "" {
+		t.Fatalf("Connection data has no socket_id: %s", connDataStr)
+	}
+
+	channel := "presence-numeric-id"
+	channelData := `{"user_id":42,"user_info":{"name":"Jane"}}`
+	auth := generateTestPresenceAuth(appKey, appSecret, socketID, channel, channelData)
+	subEvent := fmt.Sprintf(
+		`{"event":"pusher:subscribe","data":{"channel":"%s","auth":"%s","channel_data":"%s"}}`,
+		channel, auth, strings.ReplaceAll(channelData, `"`, `\"`),
+	)
+	if err := ws.WriteMessage(websocket.TextMessage, []byte(subEvent)); err != nil {
+		t.Fatalf("Failed to write subscribe: %v", err)
+	}
+
+	ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, payload, err = ws.ReadMessage()
+	if err != nil {
+		t.Fatalf("Failed to read subscription_succeeded: %v", err)
+	}
+
+	var event PusherEvent
+	if err := json.Unmarshal(payload, &event); err != nil {
+		t.Fatalf("Failed to unmarshal subscription response: %v", err)
+	}
+	if event.Event != "pusher_internal:subscription_succeeded" {
+		t.Fatalf("Expected subscription_succeeded, got %q", event.Event)
+	}
+
+	var dataStr string
+	if err := json.Unmarshal(event.Data, &dataStr); err != nil {
+		t.Fatalf("Failed to unmarshal subscription data: %v", err)
+	}
+	var success struct {
+		Presence struct {
+			IDs   []string                   `json:"ids"`
+			Hash  map[string]json.RawMessage `json:"hash"`
+			Count int                        `json:"count"`
+		} `json:"presence"`
+	}
+	if err := json.Unmarshal([]byte(dataStr), &success); err != nil {
+		t.Fatalf("Failed to parse subscription data: %v", err)
+	}
+
+	if success.Presence.Count != 1 || len(success.Presence.IDs) != 1 || success.Presence.IDs[0] != "42" {
+		t.Fatalf("Presence = %+v, want one member with user_id 42", success.Presence)
+	}
+	if got := string(success.Presence.Hash["42"]); got != `{"name":"Jane"}` {
+		t.Errorf("user_info = %s, want {\"name\":\"Jane\"}", got)
+	}
+}
+
+func TestSubscribeAfterAppRemovedReturnsError(t *testing.T) {
+	ts, s, _, appKey, _ := setupTestServer()
+	defer ts.Close()
+
+	ws, _, err := connectWebSocket(ts, appKey)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer ws.Close()
+
+	ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, _, err := ws.ReadMessage(); err != nil {
+		t.Fatalf("Failed to read connection_established: %v", err)
+	}
+
+	// Simulate a hot-reload that removed the app while the socket stayed open.
+	if err := s.configManager.DeleteApp("test-app"); err != nil {
+		t.Fatalf("Failed to delete app: %v", err)
+	}
+
+	subEvent := `{"event":"pusher:subscribe","data":{"channel":"my-channel"}}`
+	if err := ws.WriteMessage(websocket.TextMessage, []byte(subEvent)); err != nil {
+		t.Fatalf("Failed to write subscribe: %v", err)
+	}
+
+	_, payload, err := ws.ReadMessage()
+	if err != nil {
+		t.Fatalf("Failed to read error response: %v", err)
+	}
+
+	var event PusherEvent
+	if err := json.Unmarshal(payload, &event); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+	if event.Event != "pusher:error" {
+		t.Fatalf("Expected pusher:error, got %q", event.Event)
+	}
+	requireErrorCode(t, event.Data, errorCodeApplicationNotFound)
+}
+
 func generateTestAuth(appKey, appSecret, socketID, channel string) string {
 	toSign := fmt.Sprintf("%s:%s", socketID, channel)
 	mac := hmac.New(sha256.New, []byte(appSecret))

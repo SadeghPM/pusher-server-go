@@ -245,6 +245,60 @@ apps:
 	}
 }
 
+func TestManager_ReloadWithHookRunsBeforePublishing(t *testing.T) {
+	tempFile := filepath.Join(t.TempDir(), "config.yaml")
+	initialConfigData := []byte(`
+port: "6001"
+apps:
+  - app_id: "app1"
+    app_key: "key1"
+    app_secret: "secret1"
+`)
+	if err := os.WriteFile(tempFile, initialConfigData, 0644); err != nil {
+		t.Fatalf("Failed to write initial temp config file: %v", err)
+	}
+
+	manager, err := NewManager(tempFile)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	updatedConfigData := []byte(`
+port: "6001"
+apps:
+  - app_id: "app1"
+    app_key: "key2"
+    app_secret: "secret2"
+`)
+	if err := os.WriteFile(tempFile, updatedConfigData, 0644); err != nil {
+		t.Fatalf("Failed to write updated temp config file: %v", err)
+	}
+
+	called := false
+	err = manager.ReloadWithHook(func(previous, next []AppConfig) {
+		called = true
+		if len(previous) != 1 || previous[0].AppKey != "key1" {
+			t.Errorf("Previous apps = %+v, want app1 with key1", previous)
+		}
+		if len(next) != 1 || next[0].AppKey != "key2" {
+			t.Errorf("Next apps = %+v, want app1 with key2", next)
+		}
+		if current := manager.GetAppByID("app1"); current == nil || current.AppKey != "key1" {
+			t.Errorf("New config was published before the hook ran: %+v", current)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Failed to reload manager: %v", err)
+	}
+	if !called {
+		t.Fatal("Expected the reload hook to be called")
+	}
+
+	if current := manager.GetAppByID("app1"); current == nil || current.AppKey != "key2" {
+		t.Fatalf("Expected the new config to be published after the hook, got %+v", current)
+	}
+}
+
 func TestManager_AddApp(t *testing.T) {
 	// Create a temporary directory
 	tempDir, err := os.MkdirTemp("", "config_test_addapp")
