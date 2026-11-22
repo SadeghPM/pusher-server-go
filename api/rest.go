@@ -123,7 +123,7 @@ func (a *API) HandleEvents(w http.ResponseWriter, r *http.Request, appID string)
 		return
 	}
 	for _, channel := range channels {
-		if channel == "" || len(channel) > 200 {
+		if !core.IsValidChannelName(channel) {
 			http.Error(w, "Invalid channels", http.StatusBadRequest)
 			return
 		}

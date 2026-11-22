@@ -285,7 +285,7 @@ func TestSubscribePrivateChannelInvalidSignature(t *testing.T) {
 	requireErrorCode(t, event.Data, errorCodeUnauthorized)
 }
 
-func TestSubscribeChannelNameIsJSONEscaped(t *testing.T) {
+func TestSubscribeRejectsInvalidChannelName(t *testing.T) {
 	ts, _, _, appKey, _ := setupTestServer()
 	defer ts.Close()
 
@@ -300,6 +300,8 @@ func TestSubscribeChannelNameIsJSONEscaped(t *testing.T) {
 		t.Fatalf("Failed to read connection_established: %v", err)
 	}
 
+	// Quotes are not valid Pusher channel-name characters; the server must
+	// reject the subscribe rather than create an arbitrary channel key.
 	channelName := `my-"quoted"-channel`
 	message, err := json.Marshal(map[string]any{
 		"event": "pusher:subscribe",
@@ -314,18 +316,26 @@ func TestSubscribeChannelNameIsJSONEscaped(t *testing.T) {
 
 	_, payload, err := ws.ReadMessage()
 	if err != nil {
-		t.Fatalf("Failed to read subscription_succeeded: %v", err)
-	}
-	if !json.Valid(payload) {
-		t.Fatalf("Server produced invalid JSON: %s", payload)
+		t.Fatalf("Failed to read error response: %v", err)
 	}
 
-	var event PusherEvent
-	if err := json.Unmarshal(payload, &event); err != nil {
-		t.Fatalf("Failed to unmarshal subscription_succeeded: %v", err)
+	var event struct {
+		Event string          `json:"event"`
+		Data  json.RawMessage `json:"data"`
 	}
-	if event.Channel != channelName {
-		t.Errorf("Expected channel %q, got %q", channelName, event.Channel)
+	if err := json.Unmarshal(payload, &event); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+	if event.Event != "pusher:error" {
+		t.Fatalf("Expected pusher:error for an invalid channel, got %q: %s", event.Event, payload)
+	}
+
+	var dataStr string
+	if err := json.Unmarshal(event.Data, &dataStr); err != nil {
+		t.Fatalf("Failed to unmarshal error data: %v", err)
+	}
+	if !strings.Contains(dataStr, "Invalid channel name") {
+		t.Errorf("Expected an invalid-channel error, got %s", dataStr)
 	}
 }
 
@@ -1000,5 +1010,103 @@ func requireErrorCode(t *testing.T, data json.RawMessage, want int) {
 	}
 	if *payload.Code != want {
 		t.Fatalf("error code = %d, want %d", *payload.Code, want)
+	}
+}
+
+func TestSubscribeChannelLimitPerConnection(t *testing.T) {
+	ts, _, _, appKey, _ := setupTestServer()
+	defer ts.Close()
+
+	ws, _, err := connectWebSocket(ts, appKey)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer ws.Close()
+
+	ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, _, err := ws.ReadMessage(); err != nil {
+		t.Fatalf("Failed to read connection_established: %v", err)
+	}
+
+	readEvent := func() struct {
+		Event   string          `json:"event"`
+		Data    json.RawMessage `json:"data"`
+		Channel string          `json:"channel"`
+	} {
+		t.Helper()
+		_, payload, err := ws.ReadMessage()
+		if err != nil {
+			t.Fatalf("Failed to read response: %v", err)
+		}
+		var event struct {
+			Event   string          `json:"event"`
+			Data    json.RawMessage `json:"data"`
+			Channel string          `json:"channel"`
+		}
+		if err := json.Unmarshal(payload, &event); err != nil {
+			t.Fatalf("Failed to unmarshal response: %v", err)
+		}
+		return event
+	}
+
+	for i := 0; i < core.MaxChannelsPerConnection; i++ {
+		message := fmt.Sprintf(`{"event":"pusher:subscribe","data":{"channel":"ch-%d"}}`, i)
+		if err := ws.WriteMessage(websocket.TextMessage, []byte(message)); err != nil {
+			t.Fatalf("Failed to write subscribe: %v", err)
+		}
+		if event := readEvent(); event.Event != "pusher_internal:subscription_succeeded" {
+			t.Fatalf("Subscribe %d failed: %s", i, event.Event)
+		}
+	}
+
+	message := `{"event":"pusher:subscribe","data":{"channel":"ch-over-limit"}}`
+	if err := ws.WriteMessage(websocket.TextMessage, []byte(message)); err != nil {
+		t.Fatalf("Failed to write final subscribe: %v", err)
+	}
+	event := readEvent()
+	if event.Event != "pusher:error" {
+		t.Fatalf("Expected pusher:error when the channel limit is hit, got %q", event.Event)
+	}
+	var dataStr string
+	if err := json.Unmarshal(event.Data, &dataStr); err != nil {
+		t.Fatalf("Failed to unmarshal error data: %v", err)
+	}
+	if !strings.Contains(dataStr, "Too many channels") {
+		t.Errorf("Expected a channel-limit error, got %s", dataStr)
+	}
+}
+
+func TestClientEventRateLimit(t *testing.T) {
+	manager := config.NewManagerFromConfig(&config.Config{
+		Apps: []config.AppConfig{{AppID: "test-app", AppKey: "test-key", AppSecret: "test-secret"}},
+	})
+	hub := core.NewGlobalHub(nil, nil)
+	s := NewServer(hub, manager)
+
+	appHub := hub.GetOrCreateAppHub("test-app")
+	client := core.NewClient(appHub, nil, "1.1")
+	appHub.RegisterClient(client)
+	appHub.Subscribe(client, "private-limited", nil)
+
+	// The sender is excluded from its own broadcast, so use a second client
+	// to observe which events actually made it through.
+	receiver := core.NewClient(appHub, nil, "1.2")
+	appHub.RegisterClient(receiver)
+	appHub.Subscribe(receiver, "private-limited", nil)
+
+	event := PusherEvent{
+		Event:   "client-typing",
+		Channel: "private-limited",
+		Data:    json.RawMessage(`{}`),
+	}
+	for i := 0; i < core.ClientEventLimit+1; i++ {
+		s.handleClientEvent(client, event, false)
+	}
+
+	if got := len(receiver.Send); got != core.ClientEventLimit {
+		t.Errorf("Expected %d events to be forwarded, got %d", core.ClientEventLimit, got)
+	}
+	if client.ClientEventCount != core.ClientEventLimit+1 {
+		t.Errorf("Expected the rate counter to include the dropped event, got %d", client.ClientEventCount)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -54,7 +55,215 @@ var _ core.DebugNotifier = (*NotifierAdapter)(nil)
 const (
 	// wsTicketTTL is how long a dashboard WebSocket ticket stays valid.
 	wsTicketTTL = 30 * time.Second
+
+	// authMaxFailures / authFailureWindow / authLockout bound online guessing
+	// of the admin token. After too many bad tokens from one IP, that IP is
+	// refused until the lockout expires.
+	authMaxFailures   = 5
+	authFailureWindow = 5 * time.Minute
+	authLockout       = 5 * time.Minute
+
+	// authMaxStates bounds memory during a distributed guessing attack.
+	// Pruning runs at most once per interval so a burst of failures cannot
+	// turn every attempt into an O(n) scan of the state map.
+	authMaxStates     = 10000
+	authPruneInterval = time.Minute
 )
+
+// authDecision is the outcome of an admin-token check.
+type authDecision int
+
+const (
+	authAllowed authDecision = iota
+	authRejected
+	authLockedOut
+)
+
+// authState tracks failed admin-token attempts for a single client IP.
+type authState struct {
+	failures    int
+	first       time.Time
+	lockedUntil time.Time
+}
+
+// authThrottle is a small in-memory, per-IP brute-force guard for the admin
+// token. It lives in the dashboard process and needs no external state.
+type authThrottle struct {
+	mu        sync.Mutex
+	states    map[string]*authState
+	lastPrune time.Time
+}
+
+func newAuthThrottle() *authThrottle {
+	return &authThrottle{states: make(map[string]*authState)}
+}
+
+func (a *authThrottle) isLocked(ip string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.isLockedLocked(ip, time.Now())
+}
+
+// isLockedLocked reports whether ip is currently locked out. Must be called
+// with a.mu held.
+func (a *authThrottle) isLockedLocked(ip string, now time.Time) bool {
+	state := a.states[ip]
+	return state != nil && !state.lockedUntil.IsZero() && now.Before(state.lockedUntil)
+}
+
+func (a *authThrottle) recordFailure(ip string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.recordFailureLocked(ip, time.Now())
+}
+
+// recordFailureLocked records a failed attempt. Must be called with a.mu held.
+func (a *authThrottle) recordFailureLocked(ip string, now time.Time) {
+	state := a.states[ip]
+	if state == nil {
+		state = &authState{}
+		a.states[ip] = state
+	}
+	if now.Sub(state.first) >= authFailureWindow || state.first.IsZero() {
+		state.first = now
+		state.failures = 0
+		state.lockedUntil = time.Time{}
+	}
+	state.failures++
+	if state.failures >= authMaxFailures {
+		state.lockedUntil = now.Add(authLockout)
+	}
+
+	a.pruneLocked(now)
+}
+
+// authorize checks a token and records the result while holding the lock, so
+// concurrent guesses cannot all pass the lockout check before any failure is
+// recorded.
+func (a *authThrottle) authorize(ip, provided, expected string) authDecision {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	now := time.Now()
+	a.pruneLocked(now)
+	if a.isLockedLocked(ip, now) {
+		return authLockedOut
+	}
+	if subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1 {
+		delete(a.states, ip)
+		return authAllowed
+	}
+	a.recordFailureLocked(ip, now)
+	return authRejected
+}
+
+// pruneLocked drops states whose lockout or failure window has passed. It runs
+// at most once per authPruneInterval, and evicts arbitrary entries only when
+// the hard size cap is exceeded. Must be called with a.mu held.
+func (a *authThrottle) pruneLocked(now time.Time) {
+	// Scan at most once per interval. Eviction below keeps the map bounded
+	// without turning every failure during a distributed attack into an O(n)
+	// scan.
+	if now.Sub(a.lastPrune) >= authPruneInterval {
+		a.lastPrune = now
+		for key, candidate := range a.states {
+			if !candidate.lockedUntil.IsZero() {
+				if !now.Before(candidate.lockedUntil) {
+					delete(a.states, key)
+				}
+				continue
+			}
+			if !candidate.first.IsZero() && now.Sub(candidate.first) >= authFailureWindow {
+				delete(a.states, key)
+			}
+		}
+	}
+
+	// If a distributed attack still exceeds the cap, evict entries rather
+	// than growing without bound. This is best-effort memory protection.
+	for len(a.states) > authMaxStates {
+		for key := range a.states {
+			delete(a.states, key)
+			break
+		}
+	}
+}
+
+func (a *authThrottle) clear(ip string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.states, ip)
+}
+
+// peerIP extracts the peer address from RemoteAddr (ignoring the port).
+func peerIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// clientIP returns the address used for rate limiting. X-Forwarded-For is only
+// consulted when the direct peer is a configured trusted proxy; otherwise any
+// client could spoof the header and evade the lockout.
+func (s *Server) clientIP(r *http.Request) string {
+	peer := peerIP(r)
+	cfg := s.configManager.GetConfig()
+	peerAddr := net.ParseIP(peer)
+	if cfg == nil || peerAddr == nil || !cfg.IsTrustedProxy(peerAddr) {
+		return peer
+	}
+
+	xff := strings.Join(r.Header.Values("X-Forwarded-For"), ",")
+	if xff == "" {
+		return peer
+	}
+	parts := strings.Split(xff, ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		candidate := strings.TrimSpace(parts[i])
+		if candidate == "" {
+			continue
+		}
+		ip := net.ParseIP(candidate)
+		if ip == nil {
+			// A malformed chain is untrustworthy; fall back to the peer.
+			return peer
+		}
+		if !cfg.IsTrustedProxy(ip) {
+			return ip.String()
+		}
+	}
+	return peer
+}
+
+// securityHeaders applies defense-in-depth headers to every dashboard
+// response. The CSP keeps all assets local (no third-party fonts or scripts)
+// while still allowing the UI's small inline theme script and style attrs.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", strings.Join([]string{
+			"default-src 'self'",
+			"script-src 'self' 'unsafe-inline'",
+			"style-src 'self' 'unsafe-inline'",
+			"img-src 'self' data:",
+			"font-src 'self' data:",
+			"connect-src 'self' ws: wss:",
+			"object-src 'none'",
+			"base-uri 'none'",
+			"form-action 'self'",
+			"frame-ancestors 'none'",
+		}, "; "))
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		h.Set("Cross-Origin-Resource-Policy", "same-origin")
+		next.ServeHTTP(w, r)
+	})
+}
 
 type Server struct {
 	observer      *Observer
@@ -66,6 +275,9 @@ type Server struct {
 	// can leak into access logs.
 	ticketsMu sync.Mutex
 	tickets   map[string]time.Time // ticket -> expiry
+
+	// authGuard throttles failed admin-token attempts per client IP.
+	authGuard *authThrottle
 }
 
 func NewServer(observer *Observer, manager *config.Manager, hub *core.GlobalHub) *Server {
@@ -74,6 +286,7 @@ func NewServer(observer *Observer, manager *config.Manager, hub *core.GlobalHub)
 		configManager: manager,
 		globalHub:     hub,
 		tickets:       make(map[string]time.Time),
+		authGuard:     newAuthThrottle(),
 	}
 }
 
@@ -86,6 +299,9 @@ func (s *Server) Start(ctx context.Context) {
 
 	mux := http.NewServeMux()
 
+	// The admin token is only accepted via the Authorization header. Passing
+	// it in a query string leaks it into access logs, browser history and
+	// Referer headers, so ?token= is deliberately not supported anywhere.
 	authMiddleware := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			token := s.configManager.GetConfig().AdminToken
@@ -94,17 +310,18 @@ func (s *Server) Start(ctx context.Context) {
 				return
 			}
 
+			ip := s.clientIP(r)
 			authHeader := r.Header.Get("Authorization")
-			queryToken := r.URL.Query().Get("token")
-
 			providedToken := ""
 			if strings.HasPrefix(authHeader, "Bearer ") {
 				providedToken = strings.TrimPrefix(authHeader, "Bearer ")
-			} else if queryToken != "" {
-				providedToken = queryToken
 			}
 
-			if subtle.ConstantTimeCompare([]byte(providedToken), []byte(token)) != 1 {
+			switch s.authGuard.authorize(ip, providedToken, token) {
+			case authLockedOut:
+				http.Error(w, "Too many failed attempts. Try again later.", http.StatusTooManyRequests)
+				return
+			case authRejected:
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -113,21 +330,14 @@ func (s *Server) Start(ctx context.Context) {
 	}
 
 	mux.HandleFunc("/api/apps", authMiddleware(s.handleAppsRouter))
-	// /ws does its own authorization: it accepts either a one-time ticket
-	// (issued via POST /api/ticket) or the admin token as a fallback.
+	// /ws does its own authorization and only accepts a one-time ticket
+	// issued via POST /api/ticket; the long-lived token never appears in URLs.
 	mux.HandleFunc("/ws", s.handleWebSocket)
 	mux.HandleFunc("/api/trigger", authMiddleware(s.handleTrigger))
 	mux.HandleFunc("/api/ticket", authMiddleware(s.handleTicket))
-	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		cfg := s.configManager.GetConfig()
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":     "online",
-			"apps_count": len(cfg.Apps),
-			"port":       cfg.Port,
-			"host":       cfg.Host,
-		})
-	})
+	// Liveness probe for the UI and uptime monitors. Keep it minimal: no port,
+	// host or other deployment details are exposed to unauthenticated callers.
+	mux.HandleFunc("/api/health", s.handleHealth)
 	uiContent, err := fs.Sub(uiFS, "ui")
 	if err != nil {
 		slog.Error("Failed to load dashboard UI assets", "error", err)
@@ -155,7 +365,7 @@ func (s *Server) Start(ctx context.Context) {
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           securityHeaders(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -177,6 +387,17 @@ func (s *Server) Start(ctx context.Context) {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("Dashboard server shutdown error", "error", err)
 	}
+}
+
+// handleHealth is an unauthenticated liveness probe. It intentionally omits
+// deployment details such as the listening port and public host.
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	cfg := s.configManager.GetConfig()
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":     "online",
+		"apps_count": len(cfg.Apps),
+	})
 }
 
 // appErrorStatus maps config.Manager errors to HTTP status codes. The zero
@@ -394,13 +615,23 @@ func (s *Server) purgeExpiredTicketsLocked(now time.Time) {
 	}
 }
 
-// authorizeWebSocket validates the /ws request. A one-time ticket is
-// preferred (it keeps the long-lived admin token out of URLs and access
-// logs); the admin token remains accepted as a fallback.
-func (s *Server) authorizeWebSocket(r *http.Request) bool {
+// wsAuthResult is the outcome of authorizing a dashboard WebSocket request.
+type wsAuthResult int
+
+const (
+	wsAuthOK wsAuthResult = iota
+	wsAuthUnauthorized
+	wsAuthLockedOut
+)
+
+// authorizeWebSocket validates the /ws request. A one-time ticket is required
+// for browser clients so the long-lived admin token never enters a URL. An
+// Authorization: Bearer header is also accepted for non-browser clients and is
+// subject to the same brute-force lockout as the REST API.
+func (s *Server) authorizeWebSocket(r *http.Request) wsAuthResult {
 	token := s.configManager.GetConfig().AdminToken
 	if token == "" {
-		return false
+		return wsAuthUnauthorized
 	}
 
 	if ticket := r.URL.Query().Get("ticket"); ticket != "" {
@@ -411,22 +642,36 @@ func (s *Server) authorizeWebSocket(r *http.Request) bool {
 			delete(s.tickets, ticket)
 		}
 		s.ticketsMu.Unlock()
-		return ok && time.Now().Before(expiry)
+		if ok && time.Now().Before(expiry) {
+			return wsAuthOK
+		}
+		return wsAuthUnauthorized
 	}
 
-	providedToken := ""
+	// A token in the URL is never accepted: query strings end up in access
+	// logs, browser history and Referer headers.
 	authHeader := r.Header.Get("Authorization")
-	if strings.HasPrefix(authHeader, "Bearer ") {
-		providedToken = strings.TrimPrefix(authHeader, "Bearer ")
-	} else if queryToken := r.URL.Query().Get("token"); queryToken != "" {
-		providedToken = queryToken
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return wsAuthUnauthorized
 	}
+	providedToken := strings.TrimPrefix(authHeader, "Bearer ")
 
-	return subtle.ConstantTimeCompare([]byte(providedToken), []byte(token)) == 1
+	switch s.authGuard.authorize(s.clientIP(r), providedToken, token) {
+	case authAllowed:
+		return wsAuthOK
+	case authLockedOut:
+		return wsAuthLockedOut
+	default:
+		return wsAuthUnauthorized
+	}
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeWebSocket(r) {
+	switch s.authorizeWebSocket(r) {
+	case wsAuthLockedOut:
+		http.Error(w, "Too many failed attempts. Try again later.", http.StatusTooManyRequests)
+		return
+	case wsAuthUnauthorized:
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -522,6 +767,10 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 
 	if req.Channel == "" || req.Event == "" {
 		http.Error(w, "channel and event are required", http.StatusBadRequest)
+		return
+	}
+	if !core.IsValidChannelName(req.Channel) || len(req.Event) > 200 {
+		http.Error(w, "Invalid channel or event name", http.StatusBadRequest)
 		return
 	}
 

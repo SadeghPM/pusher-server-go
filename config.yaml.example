@@ -2,7 +2,11 @@ port: "6001"
 metrics_port: "9601"
 dashboard_port: "5174"
 host: "https://pusher.example.com"
-admin_token: "my-super-secret-admin-token"
+# Replace with a long random value (e.g. `openssl rand -hex 24`).
+# Placeholder values are rejected on startup.
+admin_token: "REPLACE_WITH_A_LONG_RANDOM_TOKEN"
+# Only needed when the dashboard is behind a reverse proxy you control.
+# trusted_proxies: ["127.0.0.1/32", "::1/128"]
 debug: false
 apps:
   - app_id: "my-app-id-1"

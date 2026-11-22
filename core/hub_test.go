@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -32,6 +33,81 @@ func TestAppHubSubscription(t *testing.T) {
 
 	if len(hub.channels["my-channel"]) != 1 {
 		t.Errorf("Expected 1 subscriber in channel, got %d", len(hub.channels["my-channel"]))
+	}
+}
+
+func TestTrySubscribeEnforcesPresenceCap(t *testing.T) {
+	hub := NewAppHub("test-app", nil)
+	defer hub.Close()
+
+	const channel = "presence-capped"
+	for i := 0; i < MaxPresenceMembersPerChannel; i++ {
+		client := &Client{SocketID: fmt.Sprintf("1.%d", i), Send: make(chan []byte, 1)}
+		hub.RegisterClient(client)
+		if _, accepted := hub.TrySubscribe(client, channel, &ChannelMember{UserID: fmt.Sprintf("user-%d", i)}); !accepted {
+			t.Fatalf("Member %d was rejected before reaching the cap", i)
+		}
+	}
+
+	extra := &Client{SocketID: "1.extra", Send: make(chan []byte, 1)}
+	if _, accepted := hub.TrySubscribe(extra, channel, &ChannelMember{UserID: "extra"}); accepted {
+		t.Error("Expected a new user to be rejected once the presence cap is reached")
+	}
+
+	// An existing user reconnecting from another connection stays allowed.
+	returning := &Client{SocketID: "1.returning", Send: make(chan []byte, 1)}
+	if _, accepted := hub.TrySubscribe(returning, channel, &ChannelMember{UserID: "user-0"}); !accepted {
+		t.Error("Expected an existing presence user to be accepted")
+	}
+}
+
+func TestPresenceCapCountsDistinctUsers(t *testing.T) {
+	hub := NewAppHub("test-app", nil)
+	defer hub.Close()
+
+	const channel = "presence-tabs"
+	// Many connections for the same user must not consume the member budget.
+	for i := 0; i < MaxPresenceMembersPerChannel; i++ {
+		client := &Client{SocketID: fmt.Sprintf("2.%d", i), Send: make(chan []byte, 1)}
+		if _, accepted := hub.TrySubscribe(client, channel, &ChannelMember{UserID: "same-user"}); !accepted {
+			t.Fatalf("Tab %d was rejected even though only one distinct user is present", i)
+		}
+	}
+
+	// A genuinely new user still fits: the cap is 100 distinct users, not
+	// 100 connections.
+	newClient := &Client{SocketID: "2.new", Send: make(chan []byte, 1)}
+	if _, accepted := hub.TrySubscribe(newClient, channel, &ChannelMember{UserID: "new-user"}); !accepted {
+		t.Error("Expected a new user to be accepted when the channel has one distinct user")
+	}
+}
+
+func TestSubscriptionInfoTracksChannelCount(t *testing.T) {
+	hub := NewAppHub("test-app", nil)
+	defer hub.Close()
+
+	client := &Client{SocketID: "3.1", Send: make(chan []byte, 1)}
+	for _, channel := range []string{"one", "two", "three"} {
+		if _, accepted := hub.TrySubscribe(client, channel, nil); !accepted {
+			t.Fatalf("Failed to subscribe to %q", channel)
+		}
+	}
+
+	count, subscribed := hub.SubscriptionInfo(client, "two")
+	if count != 3 || !subscribed {
+		t.Fatalf("SubscriptionInfo() = (%d, %v), want (3, true)", count, subscribed)
+	}
+
+	// Re-subscribing to an existing channel must not inflate the count.
+	hub.TrySubscribe(client, "two", nil)
+	if count, _ := hub.SubscriptionInfo(client, "two"); count != 3 {
+		t.Errorf("Re-subscribe changed the channel count to %d", count)
+	}
+
+	hub.Unsubscribe(client, "two")
+	count, subscribed = hub.SubscriptionInfo(client, "two")
+	if count != 2 || subscribed {
+		t.Errorf("After unsubscribe, SubscriptionInfo() = (%d, %v), want (2, false)", count, subscribed)
 	}
 }
 

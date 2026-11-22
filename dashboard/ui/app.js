@@ -355,6 +355,11 @@
                 return;
             }
 
+            if (response.status === 429) {
+                showLogin('Too many failed attempts. Please wait a few minutes and try again.');
+                return;
+            }
+
             if (!response.ok) {
                 throw new Error(`The dashboard returned ${response.status}. Try again.`);
             }
@@ -430,12 +435,11 @@
         try {
             const response = await fetch('/api/health', { cache: 'no-store' });
             if (!response.ok) throw new Error('Health check failed');
-            const data = await response.json();
 
             serverStatus.classList.remove('is-offline');
             serverStatus.classList.add('is-online');
             serverStatusText.textContent = 'Server online';
-            serverStatusSub.textContent = data.port ? `Realtime :${data.port}` : 'Realtime server';
+            serverStatusSub.textContent = 'Realtime server';
         } catch (error) {
             serverStatus.classList.remove('is-online');
             serverStatus.classList.add('is-offline');

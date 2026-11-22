@@ -158,6 +158,9 @@ func (h *AppHub) removeClientFromChannel(client *Client, channel string) {
 	}
 
 	delete(subscribers, client)
+	if client.channelCount > 0 {
+		client.channelCount--
+	}
 
 	// If presence channel, check if this was the last connection for this user
 	if member != nil {
@@ -199,11 +202,50 @@ func (h *AppHub) removeClientFromChannel(client *Client, channel string) {
 	}
 }
 
-func (h *AppHub) Subscribe(client *Client, channel string, member *ChannelMember) bool {
+// Subscribe adds a client to a channel. It is a convenience wrapper around
+// TrySubscribe; callers that need to know whether a presence subscription was
+// accepted must call TrySubscribe directly.
+func (h *AppHub) Subscribe(client *Client, channel string, member *ChannelMember) (isNewUser, accepted bool) {
+	return h.TrySubscribe(client, channel, member)
+}
+
+// TrySubscribe adds a client to a channel under the hub lock. Presence
+// channels refuse new users once MaxPresenceMembersPerChannel distinct users
+// are present, so concurrent subscriptions cannot race past the cap. Existing
+// users (including another tab for the same user) are always allowed.
+// It returns whether this is a new presence user and whether the subscription
+// was accepted.
+func (h *AppHub) TrySubscribe(client *Client, channel string, member *ChannelMember) (isNewUser, accepted bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if h.channels[channel] == nil {
+	subscribers := h.channels[channel]
+	existing, alreadySubscribed := subscribers[client]
+
+	if member != nil {
+		// Count distinct user IDs, not connections: many tabs for one user
+		// must not consume the channel's member budget.
+		users := make(map[string]struct{}, len(subscribers))
+		for existingClient, existingMember := range subscribers {
+			if existingClient == client || existingMember == nil {
+				continue
+			}
+			users[existingMember.UserID] = struct{}{}
+		}
+
+		_, userExists := users[member.UserID]
+		if !userExists && len(users) >= MaxPresenceMembersPerChannel {
+			return false, false
+		}
+		isNewUser = !userExists
+		// Re-subscribing the same client with the same user ID is not a new
+		// presence member, even when no other connection shares that ID.
+		if alreadySubscribed && existing != nil && existing.UserID == member.UserID {
+			isNewUser = false
+		}
+	}
+
+	if subscribers == nil {
 		h.channels[channel] = make(map[*Client]*ChannelMember)
 		metrics.ChannelsActive.WithLabelValues(h.appID).Inc()
 		h.DispatchWebhook([]WebhookEvent{
@@ -214,29 +256,29 @@ func (h *AppHub) Subscribe(client *Client, channel string, member *ChannelMember
 		})
 	}
 
-	isNewUser := false
-	if member != nil {
-		// Check if user is already in channel
-		userExists := false
-		for _, existingMember := range h.channels[channel] {
-			if existingMember != nil && existingMember.UserID == member.UserID {
-				userExists = true
-				break
-			}
-		}
-		if !userExists {
-			isNewUser = true
-		}
+	if !alreadySubscribed {
+		client.channelCount++
 	}
-
 	h.channels[channel][client] = member
-	return isNewUser
+	return isNewUser, true
 }
 
 func (h *AppHub) RLockChannels(cb func(map[string]map[*Client]*ChannelMember)) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	cb(h.channels)
+}
+
+// SubscriptionInfo returns how many channels a client is subscribed to and
+// whether it is already subscribed to channel. The count is maintained under
+// the hub lock, so this is O(1) rather than a scan of every channel.
+func (h *AppHub) SubscriptionInfo(client *Client, channel string) (count int, subscribed bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	subscribers := h.channels[channel]
+	_, subscribed = subscribers[client]
+	return client.channelCount, subscribed
 }
 
 func (h *AppHub) GetPresenceMembers(channel string) map[string]json.RawMessage {

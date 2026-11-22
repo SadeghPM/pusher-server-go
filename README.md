@@ -44,7 +44,7 @@ To download, configure, and install Pusher Server Go as a systemd service on Lin
 curl -sSL https://raw.githubusercontent.com/SadeghPM/pusher-server-go/main/install.sh | sudo bash
 ```
 
-The script installs the latest Linux x86_64 release, prompts you for configuration details (including the public Pusher URL), creates a `config.yaml` file under `/opt/pusher-clone/config.yaml`, and sets up a systemd service to run it. On other platforms, build from source with `go build .`.
+The script installs the latest Linux x86_64 release, prompts you for configuration details (including the public Pusher URL), creates a `config.yaml` file under `/opt/pusher-clone/config.yaml`, and sets up a systemd service to run it. The downloaded archive is verified against the release's `checksums.txt` with SHA-256 before it is extracted. On other platforms, build from source with `go build .`.
 
 ### Method 2: Manual Binary Installation
 
@@ -57,7 +57,10 @@ port: "6001"
 metrics_port: "9601"
 dashboard_port: "5174"
 host: "https://pusher.example.com"
-admin_token: "your-super-secret-admin-token"
+admin_token: "REPLACE_WITH_A_LONG_RANDOM_TOKEN"
+# Only needed when the dashboard is behind a reverse proxy you control.
+# X-Forwarded-For is ignored unless the direct peer is in this list.
+# trusted_proxies: ["127.0.0.1/32", "::1/128"]
 debug: false
 apps:
   - app_id: "your-app-id-1"
@@ -70,6 +73,10 @@ apps:
 > `host` is the public base URL of the Pusher server. It is shown as the **Pusher URL** in each tenant's App credentials so third-party apps can connect in production. Use the full `https://` URL with no path. If omitted, it defaults to `http://localhost:<port>`.
 >
 > If `allowed_origins` is empty or omitted, the server will allow connections from any origin.
+>
+> `admin_token` must be a long random value; known placeholder tokens are rejected on startup. Webhook URLs must be `http(s)` URLs without credentials and may not point at localhost or private/link-local addresses (SSRF protection). App IDs must be 2–64 character lowercase slugs; existing configs with other IDs must be renamed before upgrading.
+>
+> If the dashboard runs behind a reverse proxy, set `trusted_proxies` to the proxy's IPs/CIDRs so per-IP login rate limiting sees the real client address. Leave it empty when clients connect directly.
 
 4. Run the server binary:
 
@@ -106,7 +113,7 @@ The dashboard port serves both the project landing page and the admin control ro
 
 - **Home**: `http://localhost:5174/`
 - **Admin**: `http://localhost:5174/admin`
-- **Authentication**: Secured using the `admin_token` configured in `config.yaml`. The token is stored in the browser after sign-in.
+- **Authentication**: Secured using the `admin_token` configured in `config.yaml`. The token is stored in the browser after sign-in and sent only in an `Authorization: Bearer` header — it is never accepted via `?token=`. Repeated failures from one IP are rate-limited, including Bearer-authenticated `/ws` attempts. The debug console uses short-lived, single-use tickets so the token never appears in URLs or access logs. If the dashboard is behind a reverse proxy, configure `trusted_proxies` so rate limiting uses the forwarded client IP.
 
 With the control room, you can:
 - Create, switch and delete tenants without restarting the server.
@@ -129,7 +136,7 @@ The main server exposes an unauthenticated `GET /health` endpoint on its own por
 {"status":"ok","apps_count":2}
 ```
 
-The dashboard port additionally provides `GET /api/health` (default `5174`, also unauthenticated).
+The dashboard port additionally provides `GET /api/health` (default `5174`, also unauthenticated). It reports only `status` and `apps_count` — no port, host or other deployment details.
 
 The following metrics are exported:
 

@@ -28,6 +28,11 @@ const (
 	// errorCodeUnauthorized is the Pusher protocol code for authentication
 	// failures. See the Pusher Channels Protocol documentation.
 	errorCodeUnauthorized = 4009
+	// errorCodeOverCapacity reports that a channel cannot accept more members.
+	errorCodeOverCapacity = 4100
+	// errorCodeClientEventRateLimit reports that client events are arriving
+	// faster than the per-connection limit allows.
+	errorCodeClientEventRateLimit = 4301
 )
 
 type PusherEvent struct {
@@ -270,6 +275,17 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appKey 
 		s.sendError(client, 0, "Invalid subscribe data: missing channel.")
 		return
 	}
+	if !core.IsValidChannelName(subData.Channel) {
+		s.sendError(client, 0, "Invalid channel name.")
+		return
+	}
+
+	// A single connection must not be able to create unbounded channels.
+	channelCount, alreadySubscribed := client.AppHub.SubscriptionInfo(client, subData.Channel)
+	if !alreadySubscribed && channelCount >= core.MaxChannelsPerConnection {
+		s.sendError(client, 0, "Too many channels for this connection.")
+		return
+	}
 
 	isPrivate := strings.HasPrefix(subData.Channel, "private-")
 	isPresence := strings.HasPrefix(subData.Channel, "presence-")
@@ -286,12 +302,27 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appKey 
 				s.sendError(client, errorCodeUnauthorized, "Presence channels require channel_data.")
 				return
 			}
+			if len(subData.ChannelData) > core.MaxPresenceChannelDataBytes {
+				s.sendError(client, errorCodeUnauthorized, "channel_data is too large.")
+				return
+			}
 
 			var presenceData ChannelData
 			if err := json.Unmarshal([]byte(subData.ChannelData), &presenceData); err != nil || presenceData.UserID == "" {
 				s.sendError(client, errorCodeUnauthorized, "Invalid channel_data for presence channel.")
 				return
 			}
+			if len(presenceData.UserID) > core.MaxPresenceUserIDLength {
+				s.sendError(client, errorCodeUnauthorized, "Presence user_id is too long.")
+				return
+			}
+			if len(presenceData.UserInfo) > core.MaxPresenceUserInfoBytes {
+				s.sendError(client, errorCodeUnauthorized, "Presence user_info is too large.")
+				return
+			}
+
+			// Presence size is enforced atomically in TrySubscribe, which
+			// counts distinct user IDs rather than connections.
 
 			member = &core.ChannelMember{
 				UserID:   presenceData.UserID,
@@ -300,7 +331,11 @@ func (s *Server) handleSubscribe(client *core.Client, event PusherEvent, appKey 
 		}
 	}
 
-	isNewUser := client.AppHub.Subscribe(client, subData.Channel, member)
+	isNewUser, accepted := client.AppHub.TrySubscribe(client, subData.Channel, member)
+	if !accepted {
+		s.sendError(client, errorCodeOverCapacity, "Presence channel is full.")
+		return
+	}
 
 	if debug {
 		if isPresence && member != nil {
@@ -462,6 +497,10 @@ func (s *Server) handleUnsubscribe(client *core.Client, event PusherEvent, debug
 	}
 
 	if unsubData.Channel != "" {
+		if !core.IsValidChannelName(unsubData.Channel) {
+			s.sendError(client, 0, "Invalid channel name.")
+			return
+		}
 		client.AppHub.Unsubscribe(client, unsubData.Channel)
 		if debug {
 			slog.Debug("Client unsubscribed from channel",
@@ -475,46 +514,68 @@ func (s *Server) handleUnsubscribe(client *core.Client, event PusherEvent, debug
 }
 
 func (s *Server) handleClientEvent(client *core.Client, event PusherEvent, debug bool) {
-	if strings.HasPrefix(event.Event, "client-") {
-		channelName := event.Channel
+	if !strings.HasPrefix(event.Event, "client-") {
+		return
+	}
 
-		if channelName != "" {
-			isPrivate := strings.HasPrefix(channelName, "private-")
-			isPresence := strings.HasPrefix(channelName, "presence-")
+	// Fixed-window rate limit, applied before any channel work so abusive
+	// frames cannot consume broadcast resources.
+	now := time.Now()
+	if client.ClientEventWindowStart.IsZero() || now.Sub(client.ClientEventWindowStart) >= core.ClientEventWindow {
+		client.ClientEventWindowStart = now
+		client.ClientEventCount = 0
+	}
+	client.ClientEventCount++
+	if client.ClientEventCount > core.ClientEventLimit {
+		// Notify once per window instead of amplifying every dropped frame.
+		if client.ClientEventCount == core.ClientEventLimit+1 {
+			s.sendError(client, errorCodeClientEventRateLimit, "Client event rate limit exceeded.")
+		}
+		return
+	}
 
-			if isPrivate || isPresence {
-				isSubscribed := false
-				var member *core.ChannelMember
+	if len(event.Event) > 200 {
+		return
+	}
+	channelName := event.Channel
+	if !core.IsValidChannelName(channelName) {
+		return
+	}
 
-				client.AppHub.RLockChannels(func(channels map[string]map[*core.Client]*core.ChannelMember) {
-					if subscribers, ok := channels[channelName]; ok {
-						if m, ok := subscribers[client]; ok {
-							isSubscribed = true
-							member = m
-						}
-					}
-				})
+	isPrivate := strings.HasPrefix(channelName, "private-")
+	isPresence := strings.HasPrefix(channelName, "presence-")
 
-				if isSubscribed {
-					s.globalHub.Debugger.Notify(client.AppHub.AppID(), "client_event", client.SocketID, channelName, event.Event, string(event.Data))
+	if isPrivate || isPresence {
+		isSubscribed := false
+		var member *core.ChannelMember
 
-					if debug {
-						slog.Debug("Client event triggered",
-							"app_id", client.AppHub.AppID(),
-							"channel", channelName,
-							"socket_id", client.SocketID,
-							"event", event.Event,
-						)
-					}
-
-					userID := ""
-					if isPresence && member != nil {
-						userID = member.UserID
-					}
-					payload := core.MarshalEvent(event.Event, channelName, event.Data, userID)
-					client.AppHub.BroadcastToChannel(channelName, payload, client.SocketID)
+		client.AppHub.RLockChannels(func(channels map[string]map[*core.Client]*core.ChannelMember) {
+			if subscribers, ok := channels[channelName]; ok {
+				if m, ok := subscribers[client]; ok {
+					isSubscribed = true
+					member = m
 				}
 			}
+		})
+
+		if isSubscribed {
+			s.globalHub.Debugger.Notify(client.AppHub.AppID(), "client_event", client.SocketID, channelName, event.Event, string(event.Data))
+
+			if debug {
+				slog.Debug("Client event triggered",
+					"app_id", client.AppHub.AppID(),
+					"channel", channelName,
+					"socket_id", client.SocketID,
+					"event", event.Event,
+				)
+			}
+
+			userID := ""
+			if isPresence && member != nil {
+				userID = member.UserID
+			}
+			payload := core.MarshalEvent(event.Event, channelName, event.Data, userID)
+			client.AppHub.BroadcastToChannel(channelName, payload, client.SocketID)
 		}
 	}
 }

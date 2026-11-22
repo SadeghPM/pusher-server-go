@@ -2,12 +2,14 @@ package webhook
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -34,10 +36,59 @@ func NewDispatcher(manager *config.Manager, debugger core.DebugNotifier) *Dispat
 	}
 	return &Dispatcher{
 		configManager: manager,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
+		client:        newSafeClient(),
+		Debugger:      debugger,
+	}
+}
+
+// newSafeClient builds an HTTP client that cannot be used for blind SSRF:
+// redirects are not followed, and every dial re-resolves the destination and
+// refuses addresses in loopback/private/link-local ranges. Resolving again at
+// dial time (instead of trusting config validation) also defeats DNS rebinding.
+func newSafeClient() *http.Client {
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil {
+				return nil, err
+			}
+			if len(ips) == 0 {
+				return nil, fmt.Errorf("no addresses for %q", host)
+			}
+			for _, ip := range ips {
+				if config.IsBlockedIP(ip.IP) {
+					return nil, fmt.Errorf("webhook destination %q resolves to a disallowed address", host)
+				}
+			}
+			// Dialing a resolved IP keeps the original hostname for TLS SNI
+			// (http.Transport derives ServerName from the request URL). Try
+			// each address in turn so one unreachable record does not fail
+			// delivery when another would work.
+			var lastErr error
+			for _, ip := range ips {
+				conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+				if err == nil {
+					return conn, nil
+				}
+				lastErr = err
+			}
+			return nil, lastErr
 		},
-		Debugger: debugger,
+		TLSHandshakeTimeout: 5 * time.Second,
+		IdleConnTimeout:     30 * time.Second,
+	}
+	return &http.Client{
+		Timeout: 5 * time.Second,
+		// A trusted URL must not be able to redirect us to an internal host.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: transport,
 	}
 }
 
@@ -66,6 +117,10 @@ func (d *Dispatcher) Dispatch(appID string, events []core.WebhookEvent) {
 	signature := generateSignature(appCfg.AppSecret, body)
 
 	for _, webhookURL := range appCfg.Webhooks {
+		// Config loading and the dashboard API validate webhook URLs before
+		// storing them. The HTTP client re-validates every resolved address at
+		// dial time, so no blocking DNS lookup is needed here (this runs on the
+		// hub's bounded work queue).
 		go d.sendWebhook(webhookURL, body, appCfg.AppKey, signature, appID)
 	}
 }

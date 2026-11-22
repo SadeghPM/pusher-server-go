@@ -20,7 +20,7 @@ func TestNewManager_WithPort(t *testing.T) {
 	configData := []byte(`
 port: "9090"
 apps:
-  - app_id: "test_app_id"
+  - app_id: "test-app-id"
     app_key: "test_app_key"
     app_secret: "test_app_secret"
 `)
@@ -45,12 +45,12 @@ apps:
 		t.Fatalf("Expected 1 app, got %d", len(cfg.Apps))
 	}
 
-	app := manager.GetAppByID("test_app_id")
+	app := manager.GetAppByID("test-app-id")
 	if app == nil {
-		t.Fatalf("Expected app with ID 'test_app_id', got nil")
+		t.Fatalf("Expected app with ID 'test-app-id', got nil")
 	}
-	if app.AppID != "test_app_id" {
-		t.Errorf("Expected app_id 'test_app_id', got '%s'", app.AppID)
+	if app.AppID != "test-app-id" {
+		t.Errorf("Expected app_id 'test-app-id', got '%s'", app.AppID)
 	}
 	if app.AppKey != "test_app_key" {
 		t.Errorf("Expected app_key 'test_app_key', got '%s'", app.AppKey)
@@ -72,7 +72,7 @@ func TestNewManager_DefaultPort(t *testing.T) {
 	tempFile := filepath.Join(tempDir, "config.yaml")
 	configData := []byte(`
 apps:
-  - app_id: "test_app_id2"
+  - app_id: "test-app-id2"
     app_key: "test_app_key2"
     app_secret: "test_app_secret2"
 `)
@@ -106,8 +106,8 @@ apps:
 	if app == nil {
 		t.Fatalf("Expected app with key 'test_app_key2', got nil")
 	}
-	if app.AppID != "test_app_id2" {
-		t.Errorf("Expected app_id 'test_app_id2', got '%s'", app.AppID)
+	if app.AppID != "test-app-id2" {
+		t.Errorf("Expected app_id 'test-app-id2', got '%s'", app.AppID)
 	}
 }
 

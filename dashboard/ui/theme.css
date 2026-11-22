@@ -70,8 +70,10 @@
     --radius-full: 999px;
 
     /* Type */
-    --font-sans: "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    /* System-only stacks: no third-party font requests (offline-safe, and
+       compatible with a strict Content-Security-Policy). */
+    --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
 
     /* Motion */
     --ease: cubic-bezier(0.2, 0.7, 0.3, 1);

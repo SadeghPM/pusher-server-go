@@ -70,18 +70,30 @@ fi
 # 5. Create directories
 mkdir -p "${INSTALL_DIR}"
 
-# 6. Download and Extract
+# 6. Download, verify and extract
 echo -e "${YELLOW}Fetching latest release info...${NC}"
 RELEASES_JSON="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" || true)"
 LATEST_RELEASE_URL="$(printf '%s' "${RELEASES_JSON}" | grep -o "https://[^\"]*${OS}_${ARCH}\\.tar\\.gz" | head -n 1 || true)"
 
 if [ -n "${LATEST_RELEASE_URL}" ]; then
+  command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required to verify release checksums."
+  ASSET_NAME="${LATEST_RELEASE_URL##*/}"
+  CHECKSUMS_URL="${LATEST_RELEASE_URL%/*}/checksums.txt"
+
+  TMP_DIR="$(mktemp -d)"
+  trap 'rm -rf "${TMP_DIR:-}"' EXIT
+
   echo -e "${GREEN}Downloading from ${LATEST_RELEASE_URL}...${NC}"
-  TMP_ARCHIVE="$(mktemp)"
-  trap 'rm -f "${TMP_ARCHIVE:-}"' EXIT
-  curl -fL "${LATEST_RELEASE_URL}" -o "${TMP_ARCHIVE}" || die "Failed to download the release archive."
-  tar -xzf "${TMP_ARCHIVE}" -C "${INSTALL_DIR}"
-  rm -f "${TMP_ARCHIVE}"
+  curl -fL "${LATEST_RELEASE_URL}" -o "${TMP_DIR}/${ASSET_NAME}" || die "Failed to download the release archive."
+  echo -e "${YELLOW}Verifying SHA-256 checksum...${NC}"
+  curl -fL "${CHECKSUMS_URL}" -o "${TMP_DIR}/checksums.txt" || die "Failed to download checksums.txt."
+
+  EXPECTED_LINE="$(awk -v name="${ASSET_NAME}" 'NF >= 2 && ($2 == name || $NF == name) { print; exit }' "${TMP_DIR}/checksums.txt")"
+  [ -n "${EXPECTED_LINE}" ] || die "checksums.txt has no entry for ${ASSET_NAME}."
+  ( cd "${TMP_DIR}" && printf '%s\n' "${EXPECTED_LINE}" | sha256sum -c - ) || die "Checksum verification failed. Refusing to install."
+
+  tar -xzf "${TMP_DIR}/${ASSET_NAME}" -C "${INSTALL_DIR}"
+  rm -rf "${TMP_DIR}"
   trap - EXIT
 else
   echo -e "${YELLOW}No release archive found; looking for a locally built binary...${NC}"

@@ -2,6 +2,7 @@ package core
 
 import (
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -17,6 +18,16 @@ type Client struct {
 	// (even a non-blocking select send) that races with close would panic.
 	sendMu     sync.RWMutex
 	sendClosed bool
+
+	// ClientEventWindowStart and ClientEventCount implement a fixed-window
+	// rate limit for events sent by this client. They are only touched by the
+	// connection's read pump, so no lock is needed.
+	ClientEventWindowStart time.Time
+	ClientEventCount       int
+
+	// channelCount is the number of channels this client is subscribed to.
+	// It is guarded by the owning AppHub's mutex.
+	channelCount int
 }
 
 func NewClient(appHub *AppHub, conn *websocket.Conn, socketID string) *Client {

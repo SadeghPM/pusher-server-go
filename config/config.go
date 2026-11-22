@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -98,10 +99,30 @@ type Config struct {
 	// Host is the public base URL of the Pusher server (for example
 	// https://pusher.example.com). It is shown to third-party app developers
 	// as the Pusher URL. When empty it defaults to http://localhost:<port>.
-	Host       string      `yaml:"host"`
-	AdminToken string      `yaml:"admin_token"`
-	Debug      bool        `yaml:"debug"`
-	Apps       []AppConfig `yaml:"apps"`
+	Host       string `yaml:"host"`
+	AdminToken string `yaml:"admin_token"`
+	// TrustedProxies lists IPs or CIDRs whose X-Forwarded-For header may be
+	// trusted when determining the client address for auth rate limiting.
+	TrustedProxies []string    `yaml:"trusted_proxies"`
+	Debug          bool        `yaml:"debug"`
+	Apps           []AppConfig `yaml:"apps"`
+
+	// trustedProxyNets is the compiled form of TrustedProxies. It is populated
+	// when the config is loaded or validated and is never serialized.
+	trustedProxyNets []*net.IPNet
+}
+
+// IsTrustedProxy reports whether ip belongs to a configured trusted proxy.
+func (c *Config) IsTrustedProxy(ip net.IP) bool {
+	if c == nil || ip == nil {
+		return false
+	}
+	for _, network := range c.trustedProxyNets {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 type Manager struct {
@@ -125,6 +146,14 @@ func NewManagerFromConfig(cfg *Config) *Manager {
 		cfg = &Config{}
 	}
 	m := &Manager{config: cloneConfig(cfg)}
+	// Callers of this constructor are expected to provide an already-validated
+	// config, but normalize the fields that affect authentication so behavior
+	// matches configs loaded from disk.
+	m.config.AdminToken = strings.TrimSpace(m.config.AdminToken)
+	m.config.TrustedProxies = normalizeStrings(m.config.TrustedProxies)
+	if trustedProxies, err := parseTrustedProxies(m.config.TrustedProxies); err == nil {
+		m.config.trustedProxyNets = trustedProxies
+	}
 	m.buildMaps()
 	return m
 }
@@ -136,6 +165,19 @@ func cloneStrings(values []string) []string {
 	cloned := make([]string, len(values))
 	copy(cloned, values)
 	return cloned
+}
+
+// normalizeStrings trims surrounding whitespace and returns a new slice so a
+// stored value always matches the value that was validated.
+func normalizeStrings(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	normalized := make([]string, len(values))
+	for i, value := range values {
+		normalized[i] = strings.TrimSpace(value)
+	}
+	return normalized
 }
 
 func cloneApps(apps []AppConfig) []AppConfig {
@@ -160,12 +202,46 @@ func cloneConfig(cfg *Config) *Config {
 // validateConfig rejects configurations that would make tenant lookups
 // ambiguous or let a connection authenticate against an empty key.
 func validateConfig(cfg *Config) error {
+	// Trim credentials and URLs before validating so the stored values match
+	// exactly what was checked (the dashboard and HTTP client never see the
+	// surrounding whitespace).
+	rawToken := cfg.AdminToken
+	cfg.AdminToken = strings.TrimSpace(rawToken)
+	// An empty token leaves the dashboard disabled (its handlers return 503),
+	// but a token that was present and only whitespace is a configuration
+	// error rather than a request to disable the dashboard.
+	if cfg.AdminToken == "" {
+		if rawToken != "" {
+			return fmt.Errorf("admin_token must not be only whitespace")
+		}
+	} else if err := ValidateAdminToken(cfg.AdminToken); err != nil {
+		return err
+	}
+
+	cfg.TrustedProxies = normalizeStrings(cfg.TrustedProxies)
+	trustedProxies, err := parseTrustedProxies(cfg.TrustedProxies)
+	if err != nil {
+		return err
+	}
+	cfg.trustedProxyNets = trustedProxies
+
 	seenIDs := make(map[string]struct{}, len(cfg.Apps))
 	seenKeys := make(map[string]struct{}, len(cfg.Apps))
 
-	for i, app := range cfg.Apps {
+	for i := range cfg.Apps {
+		app := &cfg.Apps[i]
+		app.Webhooks = normalizeStrings(app.Webhooks)
+
 		if app.AppID == "" {
 			return fmt.Errorf("apps[%d]: app_id is required", i)
+		}
+		// app_id becomes part of the REST route (/apps/<id>/events) and the
+		// dashboard API, so enforce the same slug rule AddApp uses.
+		if !IsValidSlug(app.AppID) {
+			return fmt.Errorf("apps[%d]: app_id %q must be a valid slug (lowercase letters, digits, hyphens, 2-64 chars)", i, app.AppID)
+		}
+		if err := ValidateWebhookURLs(app.Webhooks); err != nil {
+			return fmt.Errorf("app %q: %w", app.AppID, err)
 		}
 		if app.AppKey == "" {
 			return fmt.Errorf("app %q: app_key is required", app.AppID)
@@ -306,6 +382,14 @@ func (m *Manager) AddApp(app AppConfig) error {
 		app.AppSecret = secret
 	}
 
+	// Normalize before validating so the stored URLs match what was checked.
+	app.Webhooks = normalizeStrings(app.Webhooks)
+
+	// Reject webhook URLs that could be used for SSRF (local/private targets).
+	if err := ValidateWebhookURLs(app.Webhooks); err != nil {
+		return fmt.Errorf("%w: invalid webhooks: %v", ErrAppInvalid, err)
+	}
+
 	// Check for duplicate app_id
 	if _, exists := m.appsByID[app.AppID]; exists {
 		return fmt.Errorf("%w: app with id %q already exists", ErrAppExists, app.AppID)
@@ -343,6 +427,13 @@ func (m *Manager) UpdateApp(appID string, allowedOrigins []string, webhooks []st
 	}
 	if m.config == nil {
 		return fmt.Errorf("%w: app with id %q not found", ErrAppNotFound, appID)
+	}
+
+	// The dashboard lets administrators edit webhooks, so they need the same
+	// SSRF checks as webhooks coming from the YAML config.
+	webhooks = normalizeStrings(webhooks)
+	if err := ValidateWebhookURLs(webhooks); err != nil {
+		return fmt.Errorf("%w: invalid webhooks: %v", ErrAppInvalid, err)
 	}
 
 	next := cloneConfig(m.config)
